@@ -29,7 +29,7 @@ dataset = st.sidebar.selectbox(
     DATASET_CHOICES,
     index=DATASET_CHOICES.index(DEFAULT_DATASET),
     key="selected_dataset",
-    help="Switch between STT4SG-350 and SDS-200.",
+    help="Switch between STT4SG-350, SDS-200, or All (both corpora combined).",
 )
 
 region_filter = st.sidebar.multiselect(

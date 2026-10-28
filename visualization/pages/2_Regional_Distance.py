@@ -12,7 +12,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _regional_distance as regional
 from _data import (  # noqa: E402
-    STT4SG, DATASET_CHOICES, DEFAULT_DATASET, REGIONS,
+    ALL_DATASETS, STT4SG, DATASET_CHOICES, DEFAULT_DATASET, REGIONS,
     filter_preterite, load_region_alignments_and_metadata, per_sentence_cost,
 )
 
@@ -25,11 +25,17 @@ dataset = st.sidebar.selectbox(
     DATASET_CHOICES,
     index=DATASET_CHOICES.index(DEFAULT_DATASET),
     key="selected_dataset",
-    help="Switch between STT4SG-350 and SDS-200.",
+    help="Switch between STT4SG-350, SDS-200, or All (both corpora combined).",
 )
 uses_balanced = dataset == STT4SG.name # only STT4SG has balanced subset
 regional.render_intro(uses_balanced)
-if not uses_balanced:
+if dataset == ALL_DATASETS:
+    st.warning(
+        "**All** combines both corpora: the STT4SG-350 part uses its balanced subset, the "
+        "SDS-200 part uses all sentences. Per-region sentence counts therefore vary, so read "
+        "per-region means as descriptive, not statistically balanced."
+    )
+elif not uses_balanced:
     st.warning(
         f"**{dataset}** has no curated balanced subset. Per-region sentence counts vary "
         "considerably, so read per-region means as descriptive, not statistically balanced."
