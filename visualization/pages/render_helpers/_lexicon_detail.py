@@ -2,6 +2,7 @@
 import html
 import io
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import altair as alt
@@ -19,7 +20,9 @@ from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
 )
+from pages.render_helpers import _levenshtein_graph  # noqa: E402
 from bipartite_matching import build_full_bipartite_graph, solve_matching  # noqa: E402
+from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
 from preprocessing import clean_word  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
@@ -159,6 +162,23 @@ def render_word_chart(word_rows: pd.DataFrame) -> None:
     st.altair_chart(variant_chart, use_container_width=True)
 
 
+def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_regions: list[str],
+                             include_preterite: bool, dataset: str) -> None:
+    """Render the top DIT variants on concentric rings by edit distance."""
+    dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
+    lookup = _dit_tfidf_lookup(word, selected_regions, include_preterite, dataset)
+    tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
+    graph = build_levenshtein_ring_graph(dit_rows, word, tfidf_by_hypothesis=tfidf_by_hypothesis)
+
+    st.markdown("### Levenshtein ring graph")
+    st.caption(
+        f"Top {graph['shown_count']} of {graph['candidate_count']} DIT variants by TF-IDF. "
+        "The reference word is centered; each ring shows the raw Levenshtein distance "
+        "to the reference. Node size represents alignment count."
+    )
+    _levenshtein_graph.render(graph, dark=st.context.theme.type == "dark")
+
+
 def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
                              selected_regions: list[str], include_preterite: bool,
                              dataset: str) -> None:
@@ -253,6 +273,21 @@ def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, wor
                 _render_example_sentence_expander(row, rows_by_path[row["path"]], word, dataset)
 
 
+def _dit_tfidf_lookup(ref_word: str, selected_regions: list[str], include_preterite: bool,
+                      dataset: str) -> Callable[[str], float]:
+    """Return hyp -> highest TF-IDF of the (ref, DIT-hyp) pair across the selected regions."""
+    matrix, _vocab, word_to_idx, region_order = tfidf_matrix_pairs(include_preterite, "ref_dit", dataset)
+    selected_idx = [i for i, r in enumerate(region_order) if r in selected_regions]
+
+    def lookup(hyp):
+        if pd.isna(hyp) or hyp == ref_word or not selected_idx:
+            return 0.0
+        col = word_to_idx.get(f"{ref_word}+{hyp}")
+        return float(matrix[selected_idx, col].max()) if col is not None else 0.0
+
+    return lookup
+
+
 def _hypothesis_table(slice_df: pd.DataFrame, ref_word: str, model: str,
                       selected_regions: list[str], include_preterite: bool,
                       dataset: str) -> pd.DataFrame:
@@ -271,15 +306,7 @@ def _hypothesis_table(slice_df: pd.DataFrame, ref_word: str, model: str,
             .sort_values("count", ascending=False)
         )
 
-    matrix, _vocab, word_to_idx, region_order = tfidf_matrix_pairs(include_preterite, "ref_dit", dataset)
-    selected_idx = [i for i, r in enumerate(region_order) if r in selected_regions]
-
-    def lookup(hyp):
-        if pd.isna(hyp) or hyp == ref_word or not selected_idx:
-            return 0.0
-        col = word_to_idx.get(f"{ref_word}+{hyp}")
-        return float(matrix[selected_idx, col].max()) if col is not None else 0.0
-
+    lookup = _dit_tfidf_lookup(ref_word, selected_regions, include_preterite, dataset)
     out["TF-IDF"] = out["hypothesis_word"].apply(lookup).round(5)
     return (
         out[["hypothesis_word", "count", "mean sim", "TF-IDF"]]
