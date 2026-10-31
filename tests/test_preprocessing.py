@@ -103,5 +103,25 @@ class TestCleanWordSpelledNumerals(unittest.TestCase):
         self.assertEqual(clean_word("zweitausendfünf"), "2005")
 
 
+class TestCleanWordOrdinals(unittest.TestCase):
+    """Spelled-out ordinals of any inflection match REF digit ordinals like "1."."""
+
+    def test_low_ordinals_match_digit_ordinal(self):
+        self.assertEqual(clean_word("1."), "1")
+        for word in ("erste", "ersten", "erster", "erstes"):
+            self.assertEqual(clean_word(word), "1", word)
+        self.assertEqual(clean_word("zweiten"), "2")
+        self.assertEqual(clean_word("dritte"), "3")
+
+    def test_higher_ordinals_match_digit_ordinal(self):
+        self.assertEqual(clean_word("vierte"), "4")
+        self.assertEqual(clean_word("zwanzigste"), "20")
+
+    def test_non_numeral_lookalikes_untouched(self):
+        self.assertEqual(clean_word("ein"), "ein")
+        self.assertEqual(clean_word("eine"), "eine")
+        self.assertEqual(clean_word("viertel"), "viertel")
+
+
 if __name__ == "__main__":
     unittest.main()
