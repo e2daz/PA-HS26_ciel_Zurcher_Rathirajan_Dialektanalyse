@@ -46,6 +46,12 @@ _HYPOTHESIS_TABLE_COLUMN_CONFIG = {
     ),
 }
 
+_GRAPH_RANK_LABELS = {
+    "tfidf": "TF-IDF",
+    "count": "occurrence count",
+    "similarity": "mean similarity",
+}
+
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
     "white-space: nowrap; border-bottom: 1px solid #eee;"
@@ -168,11 +174,28 @@ def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_region
     dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
     lookup = _dit_tfidf_lookup(word, selected_regions, include_preterite, dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
-    graph = build_levenshtein_ring_graph(dit_rows, word, tfidf_by_hypothesis=tfidf_by_hypothesis)
 
     st.markdown("### Levenshtein ring graph")
+    col_rank, col_top_n = st.columns(2)
+    with col_rank:
+        rank_by = st.selectbox(
+            "Select variants by",
+            options=list(_GRAPH_RANK_LABELS),
+            format_func=_GRAPH_RANK_LABELS.get,
+            key="lev_graph_rank_by",
+            help="Which DIT variants make it into the graph: highest TF-IDF, most alignment "
+                 "occurrences, or highest mean alignment similarity to the reference.",
+        )
+    with col_top_n:
+        top_n = st.slider("Number of variants", min_value=5, max_value=100, value=10, step=5,
+                          key="lev_graph_top_n",
+                          help="Edges grow quadratically; use the edge-distance slider to thin them out.")
+
+    graph = build_levenshtein_ring_graph(dit_rows, word, top_n=top_n, rank_by=rank_by,
+                                         tfidf_by_hypothesis=tfidf_by_hypothesis)
     st.caption(
-        f"Top {graph['shown_count']} of {graph['candidate_count']} DIT variants by TF-IDF. "
+        f"Top {graph['shown_count']} of {graph['candidate_count']} DIT variants by "
+        f"{_GRAPH_RANK_LABELS[rank_by]}. "
         "The reference word is centered; each ring shows the raw Levenshtein distance "
         "to the reference. Node size represents alignment count."
     )

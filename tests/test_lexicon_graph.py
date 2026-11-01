@@ -48,6 +48,29 @@ class TestLevenshteinRingGraph(unittest.TestCase):
         self.assertEqual(graph["candidate_count"], 3)
         self.assertEqual(graph["shown_count"], 2)
 
+    def test_rank_by_count_and_similarity_change_selected_variants(self):
+        rows = pd.DataFrame({
+            "hypothesis_word": ["oft", "oft", "oft", "nah", "rar"],
+            "similarity": [0.1, 0.1, 0.1, 0.9, 0.5],
+        })
+        tfidf = {"rar": 0.9, "nah": 0.5, "oft": 0.1}
+
+        def labels(rank_by):
+            graph = build_levenshtein_ring_graph(rows, "ref", top_n=1, rank_by=rank_by,
+                                                 tfidf_by_hypothesis=tfidf)
+            self.assertEqual(graph["rank_by"], rank_by)
+            return [node["label"] for node in graph["nodes"][1:]]
+
+        self.assertEqual(labels("tfidf"), ["rar"])
+        self.assertEqual(labels("count"), ["oft"])
+        self.assertEqual(labels("similarity"), ["nah"])
+
+    def test_rejects_unknown_rank_by(self):
+        rows = pd.DataFrame({"hypothesis_word": ["a"], "similarity": [0.5]})
+
+        with self.assertRaises(ValueError):
+            build_levenshtein_ring_graph(rows, "ref", rank_by="random")
+
     def test_max_edge_distance_drops_distant_pairs(self):
         rows = pd.DataFrame({
             "hypothesis_word": ["nid", "nit", "nüt", "gar nüt"],

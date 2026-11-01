@@ -1,10 +1,19 @@
 """Data preparation for interactive reference-word lexicon graphs."""
 
 from itertools import combinations
-from typing import Any
+from typing import Any, Literal
 
 import Levenshtein
 import pandas as pd
+
+RankBy = Literal["tfidf", "count", "similarity"]
+
+# Primary sort key first; the remaining keys break ties deterministically.
+_RANK_KEYS: dict[str, list[str]] = {
+    "tfidf": ["tfidf", "count"],
+    "count": ["count", "tfidf"],
+    "similarity": ["mean_similarity", "count"],
+}
 
 
 def build_levenshtein_ring_graph(
@@ -12,14 +21,16 @@ def build_levenshtein_ring_graph(
     reference_word: str,
     *,
     top_n: int = 10,
+    rank_by: RankBy = "tfidf",
     tfidf_by_hypothesis: dict[str, float] | None = None,
     max_edge_distance: int | None = None,
 ) -> dict[str, Any]:
     """Build a JSON-serializable ring graph from reference-word alignments.
 
-    Candidates are ranked by TF-IDF when supplied, then by occurrence count and
-    word for deterministic tie-breaking. Deletions and unchanged matches are
-    intentionally omitted from the prototype graph.
+    Candidates are ranked by `rank_by` ("tfidf", "count" = alignment occurrences,
+    or "similarity" = mean alignment similarity to the reference); a secondary
+    metric and finally the word itself break ties deterministically. Deletions
+    and unchanged matches are intentionally omitted from the prototype graph.
 
     Pairwise edges grow quadratically with `top_n`; pass `max_edge_distance` to
     drop distant pairs server-side when rendering larger word sets.
@@ -28,6 +39,8 @@ def build_levenshtein_ring_graph(
     missing = required.difference(rows.columns)
     if missing:
         raise ValueError(f"rows is missing required columns: {sorted(missing)}")
+    if rank_by not in _RANK_KEYS:
+        raise ValueError(f"rank_by must be one of {sorted(_RANK_KEYS)}; got {rank_by!r}")
     if top_n <= 0:
         raise ValueError(f"top_n must be positive; got {top_n}")
     if max_edge_distance is not None and max_edge_distance <= 0:
@@ -44,6 +57,7 @@ def build_levenshtein_ring_graph(
             "max_edge_distance": 0,
             "shown_count": 0,
             "candidate_count": 0,
+            "rank_by": rank_by,
         }
 
     grouped = (
@@ -55,8 +69,8 @@ def build_levenshtein_ring_graph(
     grouped["tfidf"] = grouped["hypothesis_word"].map(tfidf).fillna(0.0)
     candidate_count = len(grouped)
     grouped = grouped.sort_values(
-        ["tfidf", "count", "hypothesis_word"],
-        ascending=[False, False, True],
+        [*_RANK_KEYS[rank_by], "hypothesis_word"],
+        ascending=[False] * len(_RANK_KEYS[rank_by]) + [True],
         kind="mergesort",
     ).head(top_n)
 
@@ -111,4 +125,5 @@ def build_levenshtein_ring_graph(
         "max_edge_distance": max((edge["distance"] for edge in edges), default=0),
         "shown_count": len(grouped),
         "candidate_count": candidate_count,
+        "rank_by": rank_by,
     }

@@ -113,8 +113,11 @@ function edgeDash(distance) {{
   return distance === 1 ? null : (Math.max(3, distance + 2) + " " + Math.max(3, distance + 1));
 }}
 
+// Shrink hypothesis nodes and labels as more variants are shown so rings stay readable.
+const nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, graphData.nodes.length - 1))));
+
 function nodeRadius(node) {{
-  return node.kind === "reference" ? 29 : 10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4);
+  return node.kind === "reference" ? 29 : (10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4)) * nodeScale;
 }}
 
 function layout(nodes, edges, ringStep) {{
@@ -208,7 +211,7 @@ function render() {{
     .attr("stroke-width", 1.5);
   nodeSelection.append("text").attr("text-anchor", "middle").attr("dy", 4)
     .attr("fill", colors.text)
-    .attr("font-size", d => d.kind === "reference" ? 14 : 12).text(d => d.label);
+    .attr("font-size", d => d.kind === "reference" ? 14 : Math.max(9, 12 * nodeScale)).text(d => d.label);
 
   svg.on("click", () => {{
     selectedId = null;
