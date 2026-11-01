@@ -3,7 +3,7 @@ import json
 from functools import cache
 from pathlib import Path
 
-import streamlit.components.v1 as components
+import streamlit as st
 
 # Vendored (pinned) so the graph renders without network access.
 _D3_PATH = Path(__file__).resolve().parent / "vendor" / "d3-7.9.0.min.js"
@@ -42,7 +42,7 @@ def render(graph: dict, dark: bool = False) -> None:
     default_edge = edge_distances[len(edge_distances) // 2] if edge_distances else max_edge
     colors = _DARK if dark else _LIGHT
 
-    components.html(
+    st.iframe(
         f"""
 <div id="ring-graph" style="font-family: sans-serif; width: 100%; color: {colors['text']};">
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:8px;">
@@ -230,5 +230,4 @@ render();
 </script>
 """,
         height=680,
-        scrolling=False,
     )

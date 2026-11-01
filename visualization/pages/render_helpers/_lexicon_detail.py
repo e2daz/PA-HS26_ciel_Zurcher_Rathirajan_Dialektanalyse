@@ -110,7 +110,7 @@ def render_hypothesis_tables(word: str, word_rows: pd.DataFrame, selected_region
             word, "dialect-ignorant", selected_regions, include_preterite, dataset,
         )
 
-        st.dataframe(dit_table, use_container_width=True, hide_index=True,
+        st.dataframe(dit_table, width="stretch", hide_index=True,
                      column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
         st.caption("Default ordering: descending by **TF-IDF**.")
 
@@ -123,7 +123,7 @@ def render_hypothesis_tables(word: str, word_rows: pd.DataFrame, selected_region
             word, "dialect-aware", selected_regions, include_preterite, dataset,
         )
 
-        st.dataframe(dat_table, use_container_width=True, hide_index=True,
+        st.dataframe(dat_table, width="stretch", hide_index=True,
                      column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
         st.caption("Default ordering: descending by **count**.")
 
@@ -165,7 +165,7 @@ def render_word_chart(word_rows: pd.DataFrame) -> None:
         )
         .properties(height=340, title="DIT variants per region")
     )
-    st.altair_chart(variant_chart, use_container_width=True)
+    st.altair_chart(variant_chart, width="stretch")
 
 
 def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_regions: list[str],
