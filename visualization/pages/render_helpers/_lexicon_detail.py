@@ -24,7 +24,7 @@ from pages.render_helpers import _levenshtein_graph  # noqa: E402
 from bipartite_matching import build_full_bipartite_graph, solve_matching  # noqa: E402
 from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
-from preprocessing import clean_word  # noqa: E402
+from preprocessing import tokenize  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
 
 _HYPOTHESIS_TABLE_COLUMN_CONFIG = {
@@ -61,8 +61,8 @@ _LABEL_STYLE = (
 @st.cache_data(max_entries=64, show_spinner=True)
 def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
     """Run the bipartite solver and return the rendered matching as PNG bytes."""
-    ref_words: list[str] = [w for w in (clean_word(t) for t in reference.split()) if w]
-    hyp_words: list[str] = [w for w in (clean_word(t) for t in hypothesis.split()) if w]
+    ref_words = tokenize(reference)
+    hyp_words = tokenize(hypothesis)
 
     if not ref_words and not hyp_words:
         return None

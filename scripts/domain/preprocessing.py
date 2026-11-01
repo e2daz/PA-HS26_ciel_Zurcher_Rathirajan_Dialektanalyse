@@ -36,3 +36,13 @@ def clean_word(word: str) -> str:
     # as words by default, so REF "1." would never meet a transcript's "ersten".
     word = alpha2digit(word, "de", ordinal_threshold=0)
     return re.sub(r"[^a-z0-9äöü]", "", word)
+
+
+def tokenize(text: str) -> list[str]:
+    """Split a sentence on whitespace and clean each token, dropping empty results.
+
+    A percent sign glued to a number ("6%", as Whisper writes it) is split off
+    first so it aligns with the reference's two tokens "6 Prozent".
+    """
+    text = re.sub(r"(\d)\s*%", r"\1 %", str(text))
+    return [w for w in (clean_word(t) for t in text.split()) if w]
