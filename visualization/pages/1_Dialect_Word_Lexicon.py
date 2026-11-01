@@ -128,6 +128,7 @@ def render_detail(df_view: pd.DataFrame, word: str, regions: list[str],
     detail.render_header(word, word_rows, regions)
     detail.render_word_chart(word_rows)
     detail.render_levenshtein_graph(word, word_rows, regions, include_preterite, dataset)
+    detail.render_regional_distribution(word, word_rows, regions)
     detail.render_hypothesis_tables(word, word_rows, regions, include_preterite, dataset)
     detail.render_example_sentences(df_view, word_rows, word, regions, include_preterite, dataset)
 

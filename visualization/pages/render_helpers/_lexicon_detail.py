@@ -202,6 +202,83 @@ def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_region
     _levenshtein_graph.render(graph, dark=st.context.theme.type == "dark")
 
 
+def render_regional_distribution(word: str, word_rows: pd.DataFrame,
+                                 selected_regions: list[str]) -> None:
+    """Heatmap of where each DIT variant of the searched word occurs across the dialect regions.
+    The exact match (hypothesis == reference) is dropped so the regional variation is visible."""
+    dit_rows = word_rows[
+        (word_rows["model"] == "dialect-ignorant")
+        & word_rows["hypothesis_word"].notna()
+        & (word_rows["hypothesis_word"] != word)
+    ]
+    if dit_rows.empty:
+        st.markdown("### Regional distribution")
+        st.caption("No DIT variants to show for the selected regions.")
+        return
+
+    counts = (
+        dit_rows.groupby(["hypothesis_word", "dialect_region"], observed=True)
+        .size().reset_index(name="count")
+    )
+    # `dialect_region` is categorical; make it a plain string so the share division below works.
+    counts["dialect_region"] = counts["dialect_region"].astype(str)
+
+    st.markdown("### Regional distribution")
+    col_values, col_top_n = st.columns(2)
+    with col_values:
+        normalize = st.radio(
+            "Values",
+            options=["Absolute count", "Share within region (%)"],
+            horizontal=True,
+            key="region_dist_values",
+            help="Regions differ in sample size. 'Share within region' normalizes each region to "
+                 "100 %, so you compare which variant a region prefers instead of raw counts.",
+        )
+    with col_top_n:
+        top_n = st.slider("Number of variants", min_value=5, max_value=30, value=12, step=1,
+                          key="region_dist_top_n",
+                          help="The most frequent DIT variants of the searched word.")
+
+    # Keep the most frequent variants so the heatmap stays readable.
+    top_variants = (
+        counts.groupby("hypothesis_word")["count"].sum()
+        .sort_values(ascending=False).head(top_n).index.tolist()
+    )
+    shown = counts[counts["hypothesis_word"].isin(top_variants)].copy()
+
+    if normalize.startswith("Share"):
+        # Denominator = all DIT variants in the region, so columns are comparable across regions.
+        region_totals = counts.groupby("dialect_region")["count"].sum()
+        shown["value"] = (shown["count"] / shown["dialect_region"].map(region_totals) * 100).round(1)
+        value_title, value_format = "Share %", ".1f"
+    else:
+        shown["value"] = shown["count"]
+        value_title, value_format = "Count", "d"
+
+    region_order = [r for r in selected_regions if r in set(shown["dialect_region"])]
+    heatmap = (
+        alt.Chart(shown)
+        .mark_rect()
+        .encode(
+            x=alt.X("dialect_region:N", sort=region_order, title=None,
+                    axis=alt.Axis(labelAngle=0, labelOverlap=False)),
+            y=alt.Y("hypothesis_word:N", sort=top_variants, title="DIT variant"),
+            color=alt.Color("value:Q", scale=alt.Scale(scheme="blues"),
+                            legend=alt.Legend(title=value_title)),
+            tooltip=[
+                alt.Tooltip("hypothesis_word:N", title="Variant"),
+                alt.Tooltip("dialect_region:N", title="Region"),
+                alt.Tooltip("count:Q", title="Count"),
+                alt.Tooltip("value:Q", title=value_title, format=value_format),
+            ],
+        )
+        .properties(height=min(460, 26 * len(top_variants) + 40))
+    )
+    st.altair_chart(heatmap, use_container_width=True)
+    st.caption("Darker = more frequent. Absolute counts can mislead because regions have different "
+               "sample sizes; switch to 'Share within region' to see which variant each region prefers.")
+
+
 def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
                              selected_regions: list[str], include_preterite: bool,
                              dataset: str) -> None:
