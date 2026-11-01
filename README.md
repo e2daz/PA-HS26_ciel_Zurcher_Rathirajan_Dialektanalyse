@@ -1,4 +1,18 @@
-# BA-FS26_ciel_Mettler_Dialektanalyse
+# PA-HS26_ciel_Zurcher_Rathirajan_Dialektanalyse
+
+This repository is part of the PA (Projektarbeit, ZHAW, HS26) by **rathivib** and **zuerceri**.
+It is a fork and extension of
+[BA-FS26_ciel_Mettler_Dialektanalyse](https://github.com/michamettler/BA-FS26_ciel_Mettler_Dialektanalyse),
+the bachelor's thesis project described below.
+
+The goal of this project is to extend the existing source code in order to:
+
+- **optimize usability** of the pipeline and the interactive web tool, and
+- **visualize new insights** in connection with the dialect analysis.
+
+---
+
+## Original Project: BA-FS26_ciel_Mettler_Dialektanalyse
 
 Source code, transcripts, and analysis artifacts of the bachelor's thesis
 *Word Alignment for Swiss German ASR-Based Dialect Analysis: A Weighted Bipartite Matching Approach* (ZHAW, FS26).
