@@ -16,7 +16,7 @@ seaborn
 rich
 streamlit
 streamlit-echarts
-text2num
+text2num>=2.5,<3
 scikit-learn
 jiwer
 geopandas
