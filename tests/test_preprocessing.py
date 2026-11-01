@@ -1,4 +1,4 @@
-"""Tests for preprocessing.clean_word."""
+"""Tests for preprocessing.clean_word and preprocessing.tokenize."""
 
 import sys
 import unittest
@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "domain"))
 
-from preprocessing import clean_word
+from preprocessing import clean_word, tokenize
 
 
 class TestCleanWordBasics(unittest.TestCase):
@@ -101,6 +101,47 @@ class TestCleanWordSpelledNumerals(unittest.TestCase):
 
     def test_year_form_becomes_digits(self):
         self.assertEqual(clean_word("zweitausendfünf"), "2005")
+
+
+class TestCleanWordOrdinals(unittest.TestCase):
+    """Spelled-out ordinals of any inflection match REF digit ordinals like "1."."""
+
+    def test_low_ordinals_match_digit_ordinal(self):
+        self.assertEqual(clean_word("1."), "1")
+        for word in ("erste", "ersten", "erster", "erstes"):
+            self.assertEqual(clean_word(word), "1", word)
+        self.assertEqual(clean_word("zweiten"), "2")
+        self.assertEqual(clean_word("dritte"), "3")
+
+    def test_higher_ordinals_match_digit_ordinal(self):
+        self.assertEqual(clean_word("vierte"), "4")
+        self.assertEqual(clean_word("zwanzigste"), "20")
+
+    def test_non_numeral_lookalikes_untouched(self):
+        self.assertEqual(clean_word("ein"), "ein")
+        self.assertEqual(clean_word("eine"), "eine")
+        self.assertEqual(clean_word("viertel"), "viertel")
+
+
+
+class TestTokenizePercent(unittest.TestCase):
+    """Whisper glues "%" to the number ("6%"); the reference writes "6 Prozent".
+    Both must tokenize to the same two words so number and unit align."""
+
+    def test_glued_spaced_and_spelled_percent_agree(self):
+        for text in ("6%", "6 %", "6 Prozent"):
+            self.assertEqual(tokenize(text), ["6", "prozent"], text)
+
+    def test_glued_percent_in_sentence(self):
+        self.assertEqual(tokenize("Das Volk sagt mit 51% denkbar knapp Ja."),
+                         ["das", "volk", "sagt", "mit", "51", "prozent", "denkbar", "knapp", "ja"])
+
+    def test_multi_digit_and_decimal_percent(self):
+        self.assertEqual(tokenize("100%"), ["100", "prozent"])
+        self.assertEqual(tokenize("2,5%"), ["25", "prozent"])
+
+    def test_text_without_percent_unchanged(self):
+        self.assertEqual(tokenize("Er kam um 6 Uhr."), ["er", "kam", "um", "6", "uhr"])
 
 
 if __name__ == "__main__":

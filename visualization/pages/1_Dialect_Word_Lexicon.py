@@ -18,6 +18,13 @@ from _data import (  # noqa: E402
     CloudMode, filter_preterite, load_region_alignments_and_metadata, lexicon_search_index,
 )
 
+# Reference words with interesting DIT/DAT differences, offered as one-click examples.
+# Phonetic (abend → oben, haben → hat/habt), lexical (sprechen → reden, deshalb → darum,
+# nun → jetzt, zuvor → vorher, selbst → selber, hause → daheim) and grammatical
+# (habe → hat/hätte: Swiss German avoids Konjunktiv I). Chosen from words with >= 300
+# alignments where DIT deviates from the reference far more often than DAT.
+EXAMPLE_WORDS = ["abend", "haben", "sprechen", "deshalb", "nun", "zuvor", "selbst", "hause", "habe"]
+
 
 # --- Page 1 ---
 st.set_page_config(page_title="Dialect Word Lexicon", layout="wide")
@@ -29,7 +36,7 @@ dataset = st.sidebar.selectbox(
     DATASET_CHOICES,
     index=DATASET_CHOICES.index(DEFAULT_DATASET),
     key="selected_dataset",
-    help="Switch between STT4SG-350 and SDS-200.",
+    help="Switch between STT4SG-350, SDS-200, or All (both corpora combined).",
 )
 
 region_filter = st.sidebar.multiselect(
@@ -73,6 +80,40 @@ selected_word = st.selectbox(
     placeholder="Start typing a Standard German word...",
 )
 
+
+def _select_example_word() -> None:
+    """Load the clicked example into the search box, then clear the chip so it can be clicked again."""
+    word = st.session_state.get("example_word_pill")
+    if word:
+        st.session_state["selected_word"] = word
+    st.session_state["example_word_pill"] = None
+
+
+# Only offer words the current dataset/region/preterite filter can show; the search box rejects others.
+example_words = [
+    w for w in dict.fromkeys(EXAMPLE_WORDS + st.session_state.get("custom_example_words", []))
+    if w in ref_counts.index
+]
+col_examples, col_add = st.columns([6, 1], vertical_alignment="bottom")
+with col_examples:
+    st.pills(
+        "Or pick an example word",
+        options=example_words,
+        key="example_word_pill",
+        on_change=_select_example_word,
+        help="Predefined reference words with interesting phonetic and lexical differences "
+             "between the transcripts. Add your own with the button on the right.",
+    )
+with col_add:
+    with st.popover("+ Add"):
+        st.multiselect(
+            "Your example words",
+            options=ref_counts.index.tolist(),
+            key="custom_example_words",
+            placeholder="Add a reference word...",
+            help="Kept for this browser session only.",
+        )
+
 if st.session_state.get("_prev_selected_word") != selected_word:
     for k in [k for k in st.session_state if k.startswith("audio_loaded_")]:
         del st.session_state[k]
@@ -86,6 +127,7 @@ def render_detail(df_view: pd.DataFrame, word: str, regions: list[str],
 
     detail.render_header(word, word_rows, regions)
     detail.render_word_chart(word_rows)
+    detail.render_levenshtein_graph(word, word_rows, regions, include_preterite, dataset)
     detail.render_hypothesis_tables(word, word_rows, regions, include_preterite, dataset)
     detail.render_example_sentences(df_view, word_rows, word, regions, include_preterite, dataset)
 

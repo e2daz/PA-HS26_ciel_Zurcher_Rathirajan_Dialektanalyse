@@ -2,6 +2,7 @@
 import html
 import io
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import altair as alt
@@ -19,9 +20,11 @@ from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
 )
+from pages.render_helpers import _levenshtein_graph  # noqa: E402
 from bipartite_matching import build_full_bipartite_graph, solve_matching  # noqa: E402
+from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
-from preprocessing import clean_word  # noqa: E402
+from preprocessing import tokenize  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
 
 _HYPOTHESIS_TABLE_COLUMN_CONFIG = {
@@ -43,6 +46,12 @@ _HYPOTHESIS_TABLE_COLUMN_CONFIG = {
     ),
 }
 
+_GRAPH_RANK_LABELS = {
+    "tfidf": "TF-IDF",
+    "count": "occurrence count",
+    "similarity": "mean similarity",
+}
+
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
     "white-space: nowrap; border-bottom: 1px solid #eee;"
@@ -52,8 +61,8 @@ _LABEL_STYLE = (
 @st.cache_data(max_entries=64, show_spinner=True)
 def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
     """Run the bipartite solver and return the rendered matching as PNG bytes."""
-    ref_words: list[str] = [w for w in (clean_word(t) for t in reference.split()) if w]
-    hyp_words: list[str] = [w for w in (clean_word(t) for t in hypothesis.split()) if w]
+    ref_words = tokenize(reference)
+    hyp_words = tokenize(hypothesis)
 
     if not ref_words and not hyp_words:
         return None
@@ -101,7 +110,7 @@ def render_hypothesis_tables(word: str, word_rows: pd.DataFrame, selected_region
             word, "dialect-ignorant", selected_regions, include_preterite, dataset,
         )
 
-        st.dataframe(dit_table, use_container_width=True, hide_index=True,
+        st.dataframe(dit_table, width="stretch", hide_index=True,
                      column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
         st.caption("Default ordering: descending by **TF-IDF**.")
 
@@ -114,7 +123,7 @@ def render_hypothesis_tables(word: str, word_rows: pd.DataFrame, selected_region
             word, "dialect-aware", selected_regions, include_preterite, dataset,
         )
 
-        st.dataframe(dat_table, use_container_width=True, hide_index=True,
+        st.dataframe(dat_table, width="stretch", hide_index=True,
                      column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
         st.caption("Default ordering: descending by **count**.")
 
@@ -156,7 +165,41 @@ def render_word_chart(word_rows: pd.DataFrame) -> None:
         )
         .properties(height=340, title="DIT variants per region")
     )
-    st.altair_chart(variant_chart, use_container_width=True)
+    st.altair_chart(variant_chart, width="stretch")
+
+
+def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_regions: list[str],
+                             include_preterite: bool, dataset: str) -> None:
+    """Render the top DIT variants on concentric rings by edit distance."""
+    dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
+    lookup = _dit_tfidf_lookup(word, selected_regions, include_preterite, dataset)
+    tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
+
+    st.markdown("### Levenshtein ring graph")
+    col_rank, col_top_n = st.columns(2)
+    with col_rank:
+        rank_by = st.selectbox(
+            "Select variants by",
+            options=list(_GRAPH_RANK_LABELS),
+            format_func=_GRAPH_RANK_LABELS.get,
+            key="lev_graph_rank_by",
+            help="Which DIT variants make it into the graph: highest TF-IDF, most alignment "
+                 "occurrences, or highest mean alignment similarity to the reference.",
+        )
+    with col_top_n:
+        top_n = st.slider("Number of variants", min_value=5, max_value=100, value=10, step=5,
+                          key="lev_graph_top_n",
+                          help="Edges grow quadratically; use the edge-distance slider to thin them out.")
+
+    graph = build_levenshtein_ring_graph(dit_rows, word, top_n=top_n, rank_by=rank_by,
+                                         tfidf_by_hypothesis=tfidf_by_hypothesis)
+    st.caption(
+        f"Top {graph['shown_count']} of {graph['candidate_count']} DIT variants by "
+        f"{_GRAPH_RANK_LABELS[rank_by]}. "
+        "The reference word is centered; each ring shows the raw Levenshtein distance "
+        "to the reference. Node size represents alignment count."
+    )
+    _levenshtein_graph.render(graph, dark=st.context.theme.type == "dark")
 
 
 def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
@@ -253,6 +296,21 @@ def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, wor
                 _render_example_sentence_expander(row, rows_by_path[row["path"]], word, dataset)
 
 
+def _dit_tfidf_lookup(ref_word: str, selected_regions: list[str], include_preterite: bool,
+                      dataset: str) -> Callable[[str], float]:
+    """Return hyp -> highest TF-IDF of the (ref, DIT-hyp) pair across the selected regions."""
+    matrix, _vocab, word_to_idx, region_order = tfidf_matrix_pairs(include_preterite, "ref_dit", dataset)
+    selected_idx = [i for i, r in enumerate(region_order) if r in selected_regions]
+
+    def lookup(hyp):
+        if pd.isna(hyp) or hyp == ref_word or not selected_idx:
+            return 0.0
+        col = word_to_idx.get(f"{ref_word}+{hyp}")
+        return float(matrix[selected_idx, col].max()) if col is not None else 0.0
+
+    return lookup
+
+
 def _hypothesis_table(slice_df: pd.DataFrame, ref_word: str, model: str,
                       selected_regions: list[str], include_preterite: bool,
                       dataset: str) -> pd.DataFrame:
@@ -271,15 +329,7 @@ def _hypothesis_table(slice_df: pd.DataFrame, ref_word: str, model: str,
             .sort_values("count", ascending=False)
         )
 
-    matrix, _vocab, word_to_idx, region_order = tfidf_matrix_pairs(include_preterite, "ref_dit", dataset)
-    selected_idx = [i for i, r in enumerate(region_order) if r in selected_regions]
-
-    def lookup(hyp):
-        if pd.isna(hyp) or hyp == ref_word or not selected_idx:
-            return 0.0
-        col = word_to_idx.get(f"{ref_word}+{hyp}")
-        return float(matrix[selected_idx, col].max()) if col is not None else 0.0
-
+    lookup = _dit_tfidf_lookup(ref_word, selected_regions, include_preterite, dataset)
     out["TF-IDF"] = out["hypothesis_word"].apply(lookup).round(5)
     return (
         out[["hypothesis_word", "count", "mean sim", "TF-IDF"]]

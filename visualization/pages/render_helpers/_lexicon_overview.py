@@ -139,7 +139,7 @@ def render_top_candidates_expander(table: pd.DataFrame, mode: CloudMode = "ref_d
             f"{pair_label} pairs ranked by TF-IDF (max across selected regions). "
             "Surfaces pairs most distinct to their specific region."
         )
-        st.dataframe(table, use_container_width=True, hide_index=True, column_config=column_config)
+        st.dataframe(table, width="stretch", hide_index=True, column_config=column_config)
         st.caption("Default ordering: descending by **TF-IDF**.")
 
 

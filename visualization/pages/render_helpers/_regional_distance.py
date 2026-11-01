@@ -113,9 +113,9 @@ def render_headline_plots(summary: pd.DataFrame, regions_sorted: list[str]) -> N
     zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(strokeWidth=0.6, color="black").encode(y="y:Q")
 
     # Render as separate charts (not vconcat) so each picks up the full container width.
-    st.altair_chart(paired_chart, use_container_width=True)
+    st.altair_chart(paired_chart, width="stretch")
     st.markdown("**Total cost delta**")
-    st.altair_chart((delta_chart + zero).properties(height=220), use_container_width=True)
+    st.altair_chart((delta_chart + zero).properties(height=220), width="stretch")
 
 
 def render_summary_table(summary: pd.DataFrame, uses_balanced: bool) -> None:
@@ -147,7 +147,7 @@ def render_summary_table(summary: pd.DataFrame, uses_balanced: bool) -> None:
         "n sentences": st.column_config.NumberColumn(help=n_help),
     }
 
-    st.dataframe(display_table, hide_index=True, use_container_width=True, column_config=column_config)
+    st.dataframe(display_table, hide_index=True, width="stretch", column_config=column_config)
     st.caption("Default ordering: descending by **total cost delta (DIT − DAT)**.")
 
 
@@ -174,7 +174,7 @@ def render_cost_distribution(per_sentence: pd.DataFrame, regions_sorted: list[st
     box = base.mark_bar(size=22, opacity=0.9).encode(y="q1:Q", y2="q3:Q")
     median_tick = base.mark_tick(thickness=2.5, color="black", size=22).encode(y="median:Q")
 
-    st.altair_chart((whisker + box + median_tick).properties(height=380), use_container_width=True)
+    st.altair_chart((whisker + box + median_tick).properties(height=380), width="stretch")
 
 
 def _box_stats(df: pd.DataFrame) -> pd.DataFrame:

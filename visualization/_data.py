@@ -84,8 +84,17 @@ SDS200 = DatasetConfig(
 )
 
 DATASETS: dict[str, DatasetConfig] = {STT4SG.name: STT4SG, SDS200.name: SDS200}
-DATASET_CHOICES: tuple[str, ...] = (STT4SG.name, SDS200.name)
+ALL_DATASETS = "All"  # read both corpora together
+DATASET_CHOICES: tuple[str, ...] = (STT4SG.name, SDS200.name, ALL_DATASETS)
 DEFAULT_DATASET = STT4SG.name
+
+
+def _configs_for(dataset: str) -> tuple[DatasetConfig, ...]:
+    """DatasetConfigs behind a selection: a single corpus, or both when 'All' is picked."""
+    if dataset == ALL_DATASETS:
+        return (STT4SG, SDS200)
+    return (DATASETS[dataset],)
+
 
 REGIONS = ["Wallis", "Zürich", "Bern", "Basel", "Graubünden", "Innerschweiz", "Ostschweiz"]
 
@@ -171,37 +180,38 @@ def _load_metadata_clip_id_joined(cfg: DatasetConfig) -> pd.DataFrame:
 
 @st.cache_data
 def load_metadata(dataset: str) -> pd.DataFrame:
-    """Per-sentence metadata for the given dataset."""
-    cfg = DATASETS[dataset]
+    """Per-sentence metadata for the given dataset (both corpora concatenated when 'All')."""
+    frames = []
+    for cfg in _configs_for(dataset):
+        if cfg.metadata_join_key == "path":
+            df = _load_metadata_path_joined(cfg)
+        elif cfg.metadata_join_key == "clip_id":
+            df = _load_metadata_clip_id_joined(cfg)
+        else:
+            raise ValueError(f"Unknown metadata_join_key: {cfg.metadata_join_key}")
+        frames.append(df)
 
-    if cfg.metadata_join_key == "path":
-        df = _load_metadata_path_joined(cfg)
-    elif cfg.metadata_join_key == "clip_id":
-        df = _load_metadata_clip_id_joined(cfg)
-    else:
-        raise ValueError(f"Unknown metadata_join_key: {cfg.metadata_join_key}")
-
+    out = pd.concat(frames, ignore_index=True)
     # `dialect_region` is the dominant groupby/filter key, category speeds those and cuts memory.
-    df["dialect_region"] = df["dialect_region"].astype("category")
-    return df
+    out["dialect_region"] = out["dialect_region"].astype("category")
+    return out
 
 
 @st.cache_data
 def load_alignments(dataset: str, include_dat_dit: bool = False) -> pd.DataFrame:
-    """Concat the REF-anchored alignment parquets for the given dataset; opt-in to also include DAT-DIT."""
-    cfg = DATASETS[dataset]
-
-    dat = pd.read_parquet(cfg.dat_parquet).assign(model="dialect-aware")
-    dit = pd.read_parquet(cfg.dit_parquet).assign(model="dialect-ignorant")
-    frames = [dat, dit]
-
-    if include_dat_dit:
-        dat_dit = pd.read_parquet(cfg.dat_dit_parquet).assign(model="dat-dit")
-        frames.append(dat_dit)
+    """Concat the REF-anchored alignment parquets (both corpora when 'All'); opt-in to also include DAT-DIT.
+    Each row is tagged with its `dataset` so audio roots and the balanced subset can be resolved per corpus."""
+    frames = []
+    for cfg in _configs_for(dataset):
+        frames.append(pd.read_parquet(cfg.dat_parquet).assign(model="dialect-aware", dataset=cfg.name))
+        frames.append(pd.read_parquet(cfg.dit_parquet).assign(model="dialect-ignorant", dataset=cfg.name))
+        if include_dat_dit:
+            frames.append(pd.read_parquet(cfg.dat_dit_parquet).assign(model="dat-dit", dataset=cfg.name))
 
     out = pd.concat(frames, ignore_index=True)
-    # `model` is low-cardinality and heavily filtered/grouped on, category cuts memory and speeds groupbys.
+    # `model`/`dataset` are low-cardinality and heavily filtered/grouped on, category cuts memory and speeds groupbys.
     out["model"] = out["model"].astype("category")
+    out["dataset"] = out["dataset"].astype("category")
     return out
 
 
@@ -294,11 +304,12 @@ def resolve_audio_path(rel_path: str, dataset: str) -> Path | None:
     Tries the stored path, then `.mp3` as a fallback."""
     candidates = [rel_path, str(Path(rel_path).with_suffix(".mp3"))]
 
-    for root in DATASETS[dataset].audio_roots:
-        for cand in candidates:
-            audio = root / cand
-            if audio.exists():
-                return audio
+    for cfg in _configs_for(dataset):
+        for root in cfg.audio_roots:
+            for cand in candidates:
+                audio = root / cand
+                if audio.exists():
+                    return audio
     return None
 
 
@@ -318,13 +329,15 @@ def load_balanced_paths(dataset: str) -> pd.DataFrame:
 
 @st.cache_data
 def per_sentence_cost(dataset: str) -> pd.DataFrame:
-    """Per-sentence alignment cost for both models (DIT/DAT)."""
-    uses_balanced = dataset == STT4SG.name  # only STT4SG has a balanced subset
-
+    """Per-sentence alignment cost for both models (DIT/DAT).
+    Each corpus keeps its own evaluation subset: the balanced subset where one exists, the full set otherwise."""
     alignments = load_region_alignments_and_metadata(tuple(REGIONS), dataset, include_dat_dit=False)
-    if uses_balanced:
-        # filter to the balanced subset
-        alignments = alignments[alignments["path"].isin(set(load_balanced_paths(dataset)["path"]))]
+
+    # Restrict each corpus that has a balanced subset to its balanced paths; corpora without one stay full.
+    for cfg in _configs_for(dataset):
+        if cfg.balanced_tsv is not None:
+            balanced = set(load_balanced_paths(cfg.name)["path"])
+            alignments = alignments[(alignments["dataset"] != cfg.name) | alignments["path"].isin(balanced)]
 
     # copy (because of cache) + keep only relevant columns
     alignments = alignments[
