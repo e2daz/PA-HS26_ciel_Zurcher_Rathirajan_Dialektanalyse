@@ -244,7 +244,15 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
         counts.groupby("hypothesis_word")["count"].sum()
         .sort_values(ascending=False).head(top_n).index.tolist()
     )
-    shown = counts[counts["hypothesis_word"].isin(top_variants)].copy()
+    regions_present = [r for r in selected_regions if r in set(counts["dialect_region"])]
+
+    # Complete the variant x region grid so empty combinations show as 0 (lightest), not a dark gap.
+    grid = pd.MultiIndex.from_product([top_variants, regions_present],
+                                      names=["hypothesis_word", "dialect_region"])
+    shown = (
+        counts.set_index(["hypothesis_word", "dialect_region"])["count"]
+        .reindex(grid, fill_value=0).reset_index()
+    )
 
     if normalize.startswith("Share"):
         # Denominator = all DIT variants in the region, so columns are comparable across regions.
@@ -255,12 +263,11 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
         shown["value"] = shown["count"]
         value_title, value_format = "Count", "d"
 
-    region_order = [r for r in selected_regions if r in set(shown["dialect_region"])]
     heatmap = (
         alt.Chart(shown)
         .mark_rect()
         .encode(
-            x=alt.X("dialect_region:N", sort=region_order, title=None,
+            x=alt.X("dialect_region:N", sort=regions_present, title=None,
                     axis=alt.Axis(labelAngle=0, labelOverlap=False)),
             y=alt.Y("hypothesis_word:N", sort=top_variants, title="DIT variant"),
             color=alt.Color("value:Q", scale=alt.Scale(scheme="blues"),
