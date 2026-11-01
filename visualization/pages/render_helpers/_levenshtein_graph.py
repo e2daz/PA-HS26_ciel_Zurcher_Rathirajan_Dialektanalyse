@@ -12,11 +12,13 @@ _LIGHT = {
     "text": "#1f2937", "muted": "#64748b", "ring": "#cbd5e1", "edge": "#2563eb",
     "ref_fill": "#fca5a5", "ref_stroke": "#991b1b", "hyp_fill": "#bfdbfe", "hyp_stroke": "#1d4ed8",
     "tooltip_bg": "#ffffff", "tooltip_border": "#bbbbbb",
+    "highlight": "#ea580c", "label_halo": "#ffffff",
 }
 _DARK = {
     "text": "#e5e7eb", "muted": "#94a3b8", "ring": "#475569", "edge": "#60a5fa",
     "ref_fill": "#7f1d1d", "ref_stroke": "#fca5a5", "hyp_fill": "#1e3a8a", "hyp_stroke": "#93c5fd",
     "tooltip_bg": "#1f2937", "tooltip_border": "#4b5563",
+    "highlight": "#fb923c", "label_halo": "#0e1117",
 }
 
 
@@ -161,7 +163,7 @@ function render() {{
     message.text("No hypothesis variants are available for this reference word.");
     return;
   }}
-  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges.");
+  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges (click empty space to clear).");
   const maxDistance = Math.max(1, graphData.max_distance);
   const ringStep = Math.min(115, 270 / maxDistance);
   const nodes = graphData.nodes.map(d => ({{...d}}));
@@ -184,13 +186,41 @@ function render() {{
     .attr("stroke-dasharray", d => edgeDash(d.distance))
     .on("mouseenter", (event, d) => showTooltip(event, ["Pairwise Levenshtein distance: " + d.distance]))
     .on("mouseleave", hideTooltip);
+  // Distance labels for the selected node's edges; drawn above edges, below nodes.
+  const edgeLabelLayer = root.append("g").attr("class", "edge-labels").style("pointer-events", "none");
+
+  const isIncident = d => selectedId !== null && (d.source === selectedId || d.target === selectedId);
 
   function updateEdges() {{
     const visible = +edgeSlider.node().value;
+    const highlighted = d => isIncident(d) && d.distance <= visible;
     edgeSelection
-      .attr("opacity", d => edgeOpacity(d.distance, visible))
-      .attr("stroke-width", d => selectedId && (d.source === selectedId || d.target === selectedId)
-        ? 3.5 : edgeWidth(d.distance));
+      .attr("stroke", d => highlighted(d) ? colors.highlight : colors.edge)
+      .attr("opacity", d => {{
+        if (selectedId === null) return edgeOpacity(d.distance, visible);
+        if (highlighted(d)) return 1;
+        return d.distance <= visible ? 0.07 : 0.02;
+      }})
+      .attr("stroke-width", d => highlighted(d) ? 3 : edgeWidth(d.distance));
+    edgeSelection.filter(highlighted).raise();
+
+    // Fade every node that is not the selection, one of its visible neighbours, or the reference.
+    const neighbours = new Set([selectedId]);
+    graphData.edges.filter(highlighted).forEach(d => {{ neighbours.add(d.source); neighbours.add(d.target); }});
+    nodeSelection
+      .attr("opacity", n => selectedId === null || n.kind === "reference" || neighbours.has(n.id) ? 1 : 0.2);
+    nodeSelection.select("circle")
+      .attr("stroke", n => n.id === selectedId ? colors.highlight
+        : (n.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke))
+      .attr("stroke-width", n => n.id === selectedId ? 3.5 : 1.5);
+
+    edgeLabelLayer.selectAll("text").data(graphData.edges.filter(highlighted)).join("text")
+      .attr("x", d => (positions.get(d.source).x + positions.get(d.target).x) / 2)
+      .attr("y", d => (positions.get(d.source).y + positions.get(d.target).y) / 2)
+      .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 11).attr("font-weight", 700)
+      .attr("fill", colors.highlight)
+      .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+      .text(d => d.distance);
   }}
 
   const nodeLayer = root.append("g").attr("class", "nodes");
@@ -201,8 +231,9 @@ function render() {{
     .on("mouseleave", hideTooltip)
     .on("click", (event, d) => {{
       event.stopPropagation();
+      // The reference has no pairwise edges, so selecting it would only fade the graph.
+      if (d.kind === "reference") return;
       selectedId = selectedId === d.id ? null : d.id;
-      nodeSelection.select("circle").attr("stroke-width", n => n.id === selectedId ? 3.5 : 1.5);
       updateEdges();
     }});
   nodeSelection.append("circle").attr("r", nodeRadius)
@@ -215,7 +246,6 @@ function render() {{
 
   svg.on("click", () => {{
     selectedId = null;
-    nodeSelection.select("circle").attr("stroke-width", 1.5);
     updateEdges();
   }});
   edgeSlider.on("input", function() {{
