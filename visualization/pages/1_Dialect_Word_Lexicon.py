@@ -18,12 +18,23 @@ from _data import (  # noqa: E402
     CloudMode, filter_preterite, load_region_alignments_and_metadata, lexicon_search_index,
 )
 
-# Reference words with interesting DIT/DAT differences, offered as one-click examples.
-# Phonetic (abend → oben, haben → hat/habt), lexical (sprechen → reden, deshalb → darum,
-# nun → jetzt, zuvor → vorher, selbst → selber, hause → daheim) and grammatical
-# (habe → hat/hätte: Swiss German avoids Konjunktiv I). Chosen from words with >= 300
-# alignments where DIT deviates from the reference far more often than DAT.
-EXAMPLE_WORDS = ["abend", "haben", "sprechen", "deshalb", "nun", "zuvor", "selbst", "hause", "habe"]
+# Reference words offered as one-click examples, grouped by the kind of variation they show
+# (DIAL-25). Checked against the DIT alignments of both corpora.
+EXAMPLE_WORDS = {
+    # Lexical: the dialect uses a different word with the same meaning, which Whisper transcribes
+    # literally (krankenhaus -> spital, sprechen -> reden, deshalb -> darum, zuvor -> vorher).
+    "Lexical (different word)": [
+        "fahrrad", "krankenhaus", "arbeiten", "hause", "sprechen",
+        "junge", "deshalb", "nun", "selbst", "zuvor",
+    ],
+    # Phonetic: Whisper writes Standard German, so a dialect pronunciation shows up as a
+    # sound-alike word rather than a dialect spelling. Strongly regional: lösung -> lesung
+    # (Wallis 58 %, elsewhere <= 4 %), abend -> oben (Basel 28 %), haben -> habt (Wallis, Bern).
+    # Broader: denn -> dann, wann -> wenn, darin -> drin.
+    "Phonetic (sound-alike word)": [
+        "lösung", "abend", "haben", "denn", "wann", "darin",
+    ],
+}
 
 
 # --- Page 1 ---
@@ -89,9 +100,20 @@ def _select_example_word() -> None:
     st.session_state["example_word_pill"] = None
 
 
+# Let the user pick which kind of variation the example words should illustrate (DIAL-25).
+example_type = st.radio(
+    "Example type",
+    options=list(EXAMPLE_WORDS),
+    horizontal=True,
+    key="example_word_type",
+    help="Lexical = a different word with the same meaning (krankenhaus -> spital). "
+         "Phonetic = the dialect pronunciation is transcribed as a similar-sounding word "
+         "(lösung -> lesung in Wallis, abend -> oben in Basel).",
+)
+
 # Only offer words the current dataset/region/preterite filter can show; the search box rejects others.
 example_words = [
-    w for w in dict.fromkeys(EXAMPLE_WORDS + st.session_state.get("custom_example_words", []))
+    w for w in dict.fromkeys(EXAMPLE_WORDS[example_type] + st.session_state.get("custom_example_words", []))
     if w in ref_counts.index
 ]
 col_examples, col_add = st.columns([6, 1], vertical_alignment="bottom")
@@ -101,8 +123,7 @@ with col_examples:
         options=example_words,
         key="example_word_pill",
         on_change=_select_example_word,
-        help="Predefined reference words with interesting phonetic and lexical differences "
-             "between the transcripts. Add your own with the button on the right.",
+        help="Predefined reference words for the selected example type. Add your own with the button on the right.",
     )
 with col_add:
     with st.popover("+ Add"):
