@@ -286,16 +286,22 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
             alt.Tooltip("value:Q", title=value_title, format=value_format),
         ],
     )
-    exact_labels = base.transform_filter(alt.datum.row == exact_label).mark_text(
-        color="white", fontWeight="bold",
-    ).encode(text=alt.Text("value:Q", format=value_format))
+    # Label every non-zero cell so it is easy to spot where a variant occurs. The cell colours come
+    # from the same "blues" scale in light and dark mode, so the text colour only depends on the cell:
+    # white on dark cells (upper half of the scale; clamped exact-match cells land there too), dark
+    # otherwise.
+    labels = base.transform_filter(alt.datum.count > 0).mark_text(fontSize=11).encode(
+        text=alt.Text("value:Q", format=value_format),
+        color=alt.condition(alt.datum.value >= float(color_max) / 2,
+                            alt.value("white"), alt.value("#1f2937")),
+    )
 
-    st.altair_chart((cells + exact_labels).properties(height=min(486, 26 * len(row_order) + 40)),
+    st.altair_chart((cells + labels).properties(height=min(486, 26 * len(row_order) + 40)),
                     width="stretch")
-    st.caption("Darker = more frequent. The first row is the exact match; its colour is capped at "
-               "the most frequent variant, so read its values from the labels. Absolute counts can "
-               "mislead because regions have different sample sizes; switch to 'Share within region' "
-               "to see what each region produces.")
+    st.caption("Darker = more frequent; empty cells are 0. The first row is the exact match; its "
+               "colour is capped at the most frequent variant, so read its values from the labels. "
+               "Absolute counts can mislead because regions have different sample sizes; switch to "
+               "'Share within region' to see what each region produces.")
 
 
 def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
