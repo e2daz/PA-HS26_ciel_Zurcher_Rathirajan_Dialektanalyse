@@ -204,16 +204,13 @@ def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_region
 
 def render_regional_distribution(word: str, word_rows: pd.DataFrame,
                                  selected_regions: list[str]) -> None:
-    """Heatmap of where each DIT variant of the searched word occurs across the dialect regions.
-    The exact match (hypothesis == reference) is dropped so the regional variation is visible."""
-    dit_rows = word_rows[
-        (word_rows["model"] == "dialect-ignorant")
-        & word_rows["hypothesis_word"].notna()
-        & (word_rows["hypothesis_word"] != word)
-    ]
+    """Heatmap of where the searched word and its DIT variants occur across the dialect regions.
+    The exact match (hypothesis == reference) is the first row, so each variant can be compared
+    against how often DIT simply transcribed the reference word."""
+    dit_rows = word_rows[(word_rows["model"] == "dialect-ignorant") & word_rows["hypothesis_word"].notna()]
+    st.markdown("### Regional distribution")
     if dit_rows.empty:
-        st.markdown("### Regional distribution")
-        st.caption("No DIT variants to show for the selected regions.")
+        st.caption("No DIT transcriptions to show for the selected regions.")
         return
 
     counts = (
@@ -223,7 +220,6 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
     # `dialect_region` is categorical; make it a plain string so the share division below works.
     counts["dialect_region"] = counts["dialect_region"].astype(str)
 
-    st.markdown("### Regional distribution")
     col_values, col_top_n = st.columns(2)
     with col_values:
         normalize = st.radio(
@@ -232,30 +228,37 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
             horizontal=True,
             key="region_dist_values",
             help="Regions differ in sample size. 'Share within region' normalizes each region to "
-                 "100 %, so you compare which variant a region prefers instead of raw counts.",
+                 "100 % of its DIT transcriptions of the word (exact match + variants), so you "
+                 "compare what a region produces instead of raw counts.",
         )
     with col_top_n:
         top_n = st.slider("Number of variants", min_value=5, max_value=30, value=12, step=1,
                           key="region_dist_top_n",
-                          help="The most frequent DIT variants of the searched word.")
+                          help="The most frequent DIT variants of the searched word, shown below "
+                               "the exact match.")
 
-    # Keep the most frequent variants so the heatmap stays readable.
+    # Exact match first, then the most frequent variants so the heatmap stays readable.
+    variant_counts = counts[counts["hypothesis_word"] != word]
     top_variants = (
-        counts.groupby("hypothesis_word")["count"].sum()
+        variant_counts.groupby("hypothesis_word")["count"].sum()
         .sort_values(ascending=False).head(top_n).index.tolist()
     )
+    rows = [word] + top_variants
     regions_present = [r for r in selected_regions if r in set(counts["dialect_region"])]
 
-    # Complete the variant x region grid so empty combinations show as 0 (lightest), not a dark gap.
-    grid = pd.MultiIndex.from_product([top_variants, regions_present],
+    # Complete the word x region grid so empty combinations show as 0 (lightest), not a dark gap.
+    grid = pd.MultiIndex.from_product([rows, regions_present],
                                       names=["hypothesis_word", "dialect_region"])
     shown = (
         counts.set_index(["hypothesis_word", "dialect_region"])["count"]
         .reindex(grid, fill_value=0).reset_index()
     )
+    exact_label = f"{word} (exact match)"
+    shown["row"] = shown["hypothesis_word"].where(shown["hypothesis_word"] != word, exact_label)
+    row_order = [exact_label] + top_variants
 
     if normalize.startswith("Share"):
-        # Denominator = all DIT variants in the region, so columns are comparable across regions.
+        # Denominator = all DIT transcriptions of the word in the region, so columns are comparable.
         region_totals = counts.groupby("dialect_region")["count"].sum()
         shown["value"] = (shown["count"] / shown["dialect_region"].map(region_totals) * 100).round(1)
         value_title, value_format = "Share %", ".1f"
@@ -263,27 +266,36 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
         shown["value"] = shown["count"]
         value_title, value_format = "Count", "d"
 
-    heatmap = (
-        alt.Chart(shown)
-        .mark_rect()
-        .encode(
-            x=alt.X("dialect_region:N", sort=regions_present, title=None,
-                    axis=alt.Axis(labelAngle=0, labelOverlap=False)),
-            y=alt.Y("hypothesis_word:N", sort=top_variants, title="DIT variant"),
-            color=alt.Color("value:Q", scale=alt.Scale(scheme="blues"),
-                            legend=alt.Legend(title=value_title)),
-            tooltip=[
-                alt.Tooltip("hypothesis_word:N", title="Variant"),
-                alt.Tooltip("dialect_region:N", title="Region"),
-                alt.Tooltip("count:Q", title="Count"),
-                alt.Tooltip("value:Q", title=value_title, format=value_format),
-            ],
-        )
-        .properties(height=min(460, 26 * len(top_variants) + 40))
+    # The exact match usually dwarfs every variant; scale colours to the variants and clamp, so the
+    # variant rows keep their contrast. The saturated exact-match row is labelled with its values.
+    is_exact = shown["hypothesis_word"] == word
+    color_max = shown.loc[~is_exact, "value"].max() if top_variants else shown["value"].max()
+    color_scale = alt.Scale(scheme="blues", domain=[0, max(float(color_max), 1e-9)], clamp=True)
+
+    base = alt.Chart(shown).encode(
+        x=alt.X("dialect_region:N", sort=regions_present, title=None,
+                axis=alt.Axis(labelAngle=0, labelOverlap=False)),
+        y=alt.Y("row:N", sort=row_order, title="DIT transcription"),
     )
-    st.altair_chart(heatmap, use_container_width=True)
-    st.caption("Darker = more frequent. Absolute counts can mislead because regions have different "
-               "sample sizes; switch to 'Share within region' to see which variant each region prefers.")
+    cells = base.mark_rect().encode(
+        color=alt.Color("value:Q", scale=color_scale, legend=alt.Legend(title=value_title)),
+        tooltip=[
+            alt.Tooltip("row:N", title="Transcription"),
+            alt.Tooltip("dialect_region:N", title="Region"),
+            alt.Tooltip("count:Q", title="Count"),
+            alt.Tooltip("value:Q", title=value_title, format=value_format),
+        ],
+    )
+    exact_labels = base.transform_filter(alt.datum.row == exact_label).mark_text(
+        color="white", fontWeight="bold",
+    ).encode(text=alt.Text("value:Q", format=value_format))
+
+    st.altair_chart((cells + exact_labels).properties(height=min(486, 26 * len(row_order) + 40)),
+                    width="stretch")
+    st.caption("Darker = more frequent. The first row is the exact match; its colour is capped at "
+               "the most frequent variant, so read its values from the labels. Absolute counts can "
+               "mislead because regions have different sample sizes; switch to 'Share within region' "
+               "to see what each region produces.")
 
 
 def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
