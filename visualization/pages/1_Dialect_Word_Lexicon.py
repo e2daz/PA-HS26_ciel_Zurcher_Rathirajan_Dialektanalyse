@@ -19,16 +19,20 @@ from _data import (  # noqa: E402
 )
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
-# (DIAL-25). All verified to have the listed variants in the data.
+# (DIAL-25). Checked against the DIT alignments of both corpora.
 EXAMPLE_WORDS = {
-    # Lexical: the dialect uses a different word with the same meaning (e.g. fahrrad -> velo).
+    # Lexical: the dialect uses a different word with the same meaning, which Whisper transcribes
+    # literally (krankenhaus -> spital, sprechen -> reden, deshalb -> darum, zuvor -> vorher).
     "Lexical (different word)": [
-        "fahrrad", "butter", "krankenhaus", "arbeiten", "hause",
-        "sprechen", "junge", "deshalb", "nun", "selbst",
+        "fahrrad", "krankenhaus", "arbeiten", "hause", "sprechen",
+        "junge", "deshalb", "nun", "selbst", "zuvor",
     ],
-    # Phonetic: dialect pronunciation written out as a sound-alike spelling (e.g. nicht -> nöd/nid).
-    "Phonetic (dialect spelling)": [
-        "nicht", "haben", "etwas", "immer", "abend", "zuvor",
+    # Phonetic: Whisper writes Standard German, so a dialect pronunciation shows up as a
+    # sound-alike word rather than a dialect spelling. Strongly regional: lösung -> lesung
+    # (Wallis 58 %, elsewhere <= 4 %), abend -> oben (Basel 28 %), haben -> habt (Wallis, Bern).
+    # Broader: denn -> dann, wann -> wenn, darin -> drin.
+    "Phonetic (sound-alike word)": [
+        "lösung", "abend", "haben", "denn", "wann", "darin",
     ],
 }
 
@@ -102,8 +106,9 @@ example_type = st.radio(
     options=list(EXAMPLE_WORDS),
     horizontal=True,
     key="example_word_type",
-    help="Lexical = a different word with the same meaning (fahrrad -> velo). "
-         "Phonetic = dialect pronunciation written out (nicht -> nöd/nid).",
+    help="Lexical = a different word with the same meaning (krankenhaus -> spital). "
+         "Phonetic = the dialect pronunciation is transcribed as a similar-sounding word "
+         "(lösung -> lesung in Wallis, abend -> oben in Basel).",
 )
 
 # Only offer words the current dataset/region/preterite filter can show; the search box rejects others.
