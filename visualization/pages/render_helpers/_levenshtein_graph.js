@@ -83,8 +83,17 @@ function edgeDash(distance) {
 // Shrink hypothesis nodes and labels as more variants are shown so rings stay readable.
 const nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, graphData.nodes.length - 1))));
 
+// Keeps the first ring clear of the centre so the reference and its distance-1 variants don't cover
+// each other; the remaining rings share the rest of the space evenly.
+function ringScale(maxDistance) {
+  const outerRadius = 270, maxStep = 115, minFirstRing = 70;
+  const first = Math.max(minFirstRing, Math.min(maxStep, outerRadius / maxDistance));
+  const step = maxDistance > 1 ? Math.min(maxStep, (outerRadius - first) / (maxDistance - 1)) : 0;
+  return distance => distance === 0 ? 0 : first + (distance - 1) * step;
+}
+
 function nodeRadius(node) {
-  return node.kind === "reference" ? 29 : (10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4)) * nodeScale;
+  return node.kind === "reference" ? 20 : (10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4)) * nodeScale;
 }
 
 function labelFontSize(node) {
@@ -99,12 +108,12 @@ function nodeFootprint(node) {
 
 // Forces only approximate spacing, and snapping onto the ring can undo it, so finish per ring.
 // A ring too full for every label shares the available room evenly.
-function spreadAlongRings(nodes, ringStep) {
+function spreadAlongRings(nodes, ringRadius) {
   const rings = d3.group(nodes.filter(d => d.kind !== "reference"), d => d.distance);
   for (const [distance, ringNodes] of rings) {
     if (ringNodes.length < 2) continue;
     ringNodes.sort((a, b) => a.angle - b.angle);
-    const wanted = ringNodes.map(node => nodeFootprint(node) / (distance * ringStep));
+    const wanted = ringNodes.map(node => nodeFootprint(node) / ringRadius(distance));
     const fit = Math.min(1, Math.PI / d3.sum(wanted));
     const halfAngle = wanted.map(angle => angle * fit);
     for (let pass = 0; pass < 60; pass++) {
@@ -123,20 +132,20 @@ function spreadAlongRings(nodes, ringStep) {
 }
 
 // The only way a hypothesis node gets a position: the radius always comes from its Levenshtein distance.
-function placeOnRing(node, angle, ringStep) {
+function placeOnRing(node, angle, ringRadius) {
   node.angle = angle;
-  node.x = center.x + node.distance * ringStep * Math.cos(angle);
-  node.y = center.y + node.distance * ringStep * Math.sin(angle);
+  node.x = center.x + ringRadius(node.distance) * Math.cos(angle);
+  node.y = center.y + ringRadius(node.distance) * Math.sin(angle);
 }
 
-function layout(nodes, edges, ringStep) {
+function layout(nodes, edges, ringRadius) {
   // Deterministic start: evenly spaced angles per ring, then let forces settle.
   const byDistance = d3.group(nodes, d => d.distance);
   for (const [distance, ringNodes] of byDistance) {
     ringNodes.forEach((node, index) => {
       const angle = -Math.PI / 2 + 2 * Math.PI * index / ringNodes.length + distance * 0.5;
-      node.x = center.x + distance * ringStep * Math.cos(angle);
-      node.y = center.y + distance * ringStep * Math.sin(angle);
+      node.x = center.x + ringRadius(distance) * Math.cos(angle);
+      node.y = center.y + ringRadius(distance) * Math.sin(angle);
     });
   }
   const reference = nodes.find(d => d.kind === "reference");
@@ -145,9 +154,9 @@ function layout(nodes, edges, ringStep) {
   const maxEdge = Math.max(1, graphData.max_edge_distance);
   const links = edges.map(e => ({source: e.source, target: e.target, distance: e.distance}));
   const simulation = d3.forceSimulation(nodes)
-    .force("radial", d3.forceRadial(d => d.distance * ringStep, center.x, center.y).strength(1))
+    .force("radial", d3.forceRadial(d => ringRadius(d.distance), center.x, center.y).strength(1))
     .force("link", d3.forceLink(links).id(d => d.id)
-      .distance(d => d.distance * ringStep * 0.6)
+      .distance(d => ringRadius(d.distance) * 0.6)
       .strength(d => 0.08 * Math.pow(1 - (d.distance - 1) / maxEdge, 2)))
     // Repulsion spreads variants around the full ring; links only decide who neighbours whom.
     .force("charge", d3.forceManyBody().strength(d => d.kind === "reference" ? 0 : -420))
@@ -156,12 +165,12 @@ function layout(nodes, edges, ringStep) {
   for (let i = 0; i < 300; i++) simulation.tick();
   // Snap back onto the ring so ring membership stays exact.
   for (const node of nodes) node.angle = Math.atan2(node.y - center.y, node.x - center.x);
-  spreadAlongRings(nodes, ringStep);
+  spreadAlongRings(nodes, ringRadius);
   for (const node of nodes) {
     if (node.kind === "reference") continue;
-    placeOnRing(node, node.angle, ringStep);
+    placeOnRing(node, node.angle, ringRadius);
     node.defaultAngle = node.angle;
-    if (savedAngles[node.id] !== undefined) placeOnRing(node, savedAngles[node.id], ringStep);
+    if (savedAngles[node.id] !== undefined) placeOnRing(node, savedAngles[node.id], ringRadius);
   }
   return new Map(nodes.map(d => [d.id, d]));
 }
@@ -175,13 +184,13 @@ function render() {
   }
   message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges or hide it (click empty space to clear); drag a node along its ring to group variants.");
   const maxDistance = Math.max(1, graphData.max_distance);
-  const ringStep = Math.min(115, 270 / maxDistance);
+  const ringRadius = ringScale(maxDistance);
   const nodes = graphData.nodes.map(d => ({...d}));
-  const positions = layout(nodes, graphData.edges, ringStep);
+  const positions = layout(nodes, graphData.edges, ringRadius);
 
   const rings = root.append("g").attr("class", "rings");
   for (let distance = 1; distance <= maxDistance; distance++) {
-    const radius = distance * ringStep;
+    const radius = ringRadius(distance);
     rings.append("circle").attr("cx", center.x).attr("cy", center.y).attr("r", radius)
       .attr("fill", "none").attr("stroke", colors.ring).attr("stroke-dasharray", "3 4");
   }
@@ -282,7 +291,7 @@ function render() {
     .on("start", () => { dragging = true; hideTooltip(); })
     .on("drag", function(event, d) {
       // Only the angle follows the pointer, so the node stays on the ring of its computed distance.
-      placeOnRing(d, Math.atan2(event.y - center.y, event.x - center.x), ringStep);
+      placeOnRing(d, Math.atan2(event.y - center.y, event.x - center.x), ringRadius);
       savedAngles[d.id] = d.angle;
       d3.select(this).call(positionNodes);
       d3.selectAll(incidentEdges.get(d.id)).call(positionEdges);
@@ -306,7 +315,7 @@ function render() {
   // Above the nodes so a node can never cover a ring's distance; ignores the pointer so nodes stay clickable.
   const ringLabelLayer = root.append("g").attr("class", "ring-labels").style("pointer-events", "none");
   for (let distance = 1; distance <= maxDistance; distance++) {
-    ringLabelLayer.append("text").attr("x", center.x).attr("y", center.y - distance * ringStep)
+    ringLabelLayer.append("text").attr("x", center.x).attr("y", center.y - ringRadius(distance))
       .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 12).attr("font-weight", 600)
       .attr("fill", colors.muted)
       .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
@@ -357,7 +366,7 @@ function render() {
   d3.select("#reset-layout").on("click", () => {
     savedAngles = {};
     saveState();
-    nodes.filter(d => d.kind !== "reference").forEach(d => placeOnRing(d, d.defaultAngle, ringStep));
+    nodes.filter(d => d.kind !== "reference").forEach(d => placeOnRing(d, d.defaultAngle, ringRadius));
     nodeSelection.call(positionNodes);
     edgeSelection.call(positionEdges);
     edgeLabelLayer.selectAll("text").call(positionEdgeLabels);
