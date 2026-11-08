@@ -10,6 +10,29 @@ const edgeIncrease = d3.select("#edge-increase");
 const maxEdgeThreshold = +edgeInput.attr("max");
 let edgeThreshold = +edgeInput.attr("value");
 let selectedId = null;
+let dragging = false;
+
+// Per reference word, so manual grouping survives the iframe being rebuilt (e.g. another variant count).
+// Storing angles instead of coordinates keeps them valid when the ring spacing changes.
+const storageKey = "levenshteinRing:" + graphData.reference;
+const savedState = loadSavedState();
+let savedAngles = savedState.angles || {};
+
+function loadSavedState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(storageKey)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveState() {
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify({angles: savedAngles}));
+  } catch {
+    // Storage can be blocked; the graph still works, the arrangement just isn't remembered.
+  }
+}
 
 function showTooltip(event, lines) {
   hideTooltip();
@@ -65,6 +88,13 @@ function labelFontSize(node) {
   return node.kind === "reference" ? 14 : Math.max(10.5, 12 * nodeScale);
 }
 
+// The only way a hypothesis node gets a position: the radius always comes from its Levenshtein distance.
+function placeOnRing(node, angle, ringStep) {
+  node.angle = angle;
+  node.x = center.x + node.distance * ringStep * Math.cos(angle);
+  node.y = center.y + node.distance * ringStep * Math.sin(angle);
+}
+
 function layout(nodes, edges, ringStep) {
   // Deterministic start: evenly spaced angles per ring, then let forces settle.
   const byDistance = d3.group(nodes, d => d.distance);
@@ -93,11 +123,11 @@ function layout(nodes, edges, ringStep) {
   // Snap back onto the ring so ring membership stays exact.
   for (const node of nodes) {
     if (node.kind === "reference") continue;
-    const angle = Math.atan2(node.y - center.y, node.x - center.x);
-    node.x = center.x + node.distance * ringStep * Math.cos(angle);
-    node.y = center.y + node.distance * ringStep * Math.sin(angle);
+    placeOnRing(node, Math.atan2(node.y - center.y, node.x - center.x), ringStep);
+    node.defaultAngle = node.angle;
+    if (savedAngles[node.id] !== undefined) placeOnRing(node, savedAngles[node.id], ringStep);
   }
-  return new Map(nodes.map(d => [d.id, {x: d.x, y: d.y}]));
+  return new Map(nodes.map(d => [d.id, d]));
 }
 
 function render() {
@@ -107,7 +137,7 @@ function render() {
     d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
     return;
   }
-  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges (click empty space to clear).");
+  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges (click empty space to clear); drag a node along its ring to group variants.");
   const maxDistance = Math.max(1, graphData.max_distance);
   const ringStep = Math.min(115, 270 / maxDistance);
   const nodes = graphData.nodes.map(d => ({...d}));
@@ -121,13 +151,27 @@ function render() {
   }
 
   const edgeLayer = root.append("g").attr("class", "edges");
-  const edgeSelection = edgeLayer.selectAll("line").data(graphData.edges).join("line")
+  const positionNodes = selection => selection
+    .attr("transform", d => "translate(" + positions.get(d.id).x + "," + positions.get(d.id).y + ")");
+  const positionEdges = selection => selection
     .attr("x1", d => positions.get(d.source).x).attr("y1", d => positions.get(d.source).y)
-    .attr("x2", d => positions.get(d.target).x).attr("y2", d => positions.get(d.target).y)
+    .attr("x2", d => positions.get(d.target).x).attr("y2", d => positions.get(d.target).y);
+  const positionEdgeLabels = selection => selection
+    .attr("x", d => (positions.get(d.source).x + positions.get(d.target).x) / 2)
+    .attr("y", d => (positions.get(d.source).y + positions.get(d.target).y) / 2);
+
+  const edgeSelection = edgeLayer.selectAll("line").data(graphData.edges).join("line")
+    .call(positionEdges)
     .attr("stroke", colors.edge)
     .attr("stroke-dasharray", d => edgeDash(d.distance))
     .on("mouseenter", (event, d) => showTooltip(event, ["Pairwise Levenshtein distance: " + d.distance]))
     .on("mouseleave", hideTooltip);
+  // Dragging redraws only the moved node's edges, which matters at thousands of edges.
+  const incidentEdges = new Map(nodes.map(node => [node.id, []]));
+  edgeSelection.each(function(d) {
+    incidentEdges.get(d.source).push(this);
+    incidentEdges.get(d.target).push(this);
+  });
   // Distance labels for the selected node's edges; drawn above edges, below nodes.
   const edgeLabelLayer = root.append("g").attr("class", "edge-labels").style("pointer-events", "none");
 
@@ -157,8 +201,7 @@ function render() {
       .attr("stroke-width", n => n.id === selectedId ? 3.5 : 1.5);
 
     edgeLabelLayer.selectAll("text").data(graphData.edges.filter(highlighted)).join("text")
-      .attr("x", d => (positions.get(d.source).x + positions.get(d.target).x) / 2)
-      .attr("y", d => (positions.get(d.source).y + positions.get(d.target).y) / 2)
+      .call(positionEdgeLabels)
       .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 11).attr("font-weight", 700)
       .attr("fill", colors.highlight)
       .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
@@ -167,9 +210,9 @@ function render() {
 
   const nodeLayer = root.append("g").attr("class", "nodes");
   const nodeSelection = nodeLayer.selectAll("g").data(nodes).join("g")
-    .attr("transform", d => "translate(" + positions.get(d.id).x + "," + positions.get(d.id).y + ")")
-    .style("cursor", "pointer")
-    .on("mouseenter", (event, d) => showTooltip(event, nodeLines(d)))
+    .call(positionNodes)
+    .style("cursor", d => d.kind === "reference" ? "default" : "grab")
+    .on("mouseenter", (event, d) => { if (!dragging) showTooltip(event, nodeLines(d)); })
     .on("mouseleave", hideTooltip)
     .on("click", (event, d) => {
       event.stopPropagation();
@@ -178,6 +221,18 @@ function render() {
       selectedId = selectedId === d.id ? null : d.id;
       updateEdges();
     });
+  // The small click distance keeps a slightly shaky click a selection instead of a drag.
+  nodeSelection.filter(d => d.kind !== "reference").call(d3.drag().clickDistance(4)
+    .on("start", () => { dragging = true; hideTooltip(); })
+    .on("drag", function(event, d) {
+      // Only the angle follows the pointer, so the node stays on the ring of its computed distance.
+      placeOnRing(d, Math.atan2(event.y - center.y, event.x - center.x), ringStep);
+      savedAngles[d.id] = d.angle;
+      d3.select(this).call(positionNodes);
+      d3.selectAll(incidentEdges.get(d.id)).call(positionEdges);
+      edgeLabelLayer.selectAll("text").call(positionEdgeLabels);
+    })
+    .on("end", () => { dragging = false; saveState(); }));
   nodeSelection.append("circle").attr("r", nodeRadius)
     .attr("fill", d => d.kind === "reference" ? colors.ref_fill : colors.hyp_fill)
     .attr("stroke", d => d.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke)
@@ -231,7 +286,16 @@ function render() {
     setEdgeThreshold(Number.isNaN(this.valueAsNumber) ? edgeThreshold : this.valueAsNumber);
   });
   setEdgeThreshold(edgeThreshold);
+
+  d3.select("#reset-layout").on("click", () => {
+    savedAngles = {};
+    saveState();
+    nodes.filter(d => d.kind !== "reference").forEach(d => placeOnRing(d, d.defaultAngle, ringStep));
+    nodeSelection.call(positionNodes);
+    edgeSelection.call(positionEdges);
+    edgeLabelLayer.selectAll("text").call(positionEdgeLabels);
+    svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity);
+  });
 }
 
-d3.select("#reset-view").on("click", () => svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity));
 render();
