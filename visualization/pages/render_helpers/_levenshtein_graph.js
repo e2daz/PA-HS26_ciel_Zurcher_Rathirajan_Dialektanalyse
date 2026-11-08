@@ -6,12 +6,33 @@ svg.call(zoom);
 const message = d3.select("#graph-message");
 const hideSelected = d3.select("#hide-selected");
 const hiddenMenu = d3.select("#hidden-menu");
-const edgeInput = d3.select("#edge-distance");
-const edgeDecrease = d3.select("#edge-decrease");
-const edgeIncrease = d3.select("#edge-increase");
-const maxEdgeThreshold = +edgeInput.attr("max");
-let edgeThreshold = +edgeInput.attr("value");
+const variantSummary = d3.select("#variant-summary");
+const variantCountKey = "levenshteinRing:variantCount";
+const defaultVariantCount = 10, minVariantCount = 5;
+// Each redraw reruns the layout, so wait for the user to stop clicking or typing.
+const variantRedrawDelayMs = 300;
+let variantRedrawTimer;
+let edgeThreshold = 1;
+let edgeThresholdChosen = false;
+let refreshEdges = () => {};
 let selectedId = null;
+
+const edgeStepper = createStepper("edge-distance", value => {
+  edgeThresholdChosen = true;
+  edgeThreshold = value;
+  refreshEdges();
+});
+const variantStepper = createStepper("variant-count", value => {
+  clearTimeout(variantRedrawTimer);
+  variantRedrawTimer = setTimeout(() => {
+    variantCount = value;
+    saveVariantCount();
+    render();
+  }, variantRedrawDelayMs);
+});
+const availableVariants = graphData.nodes.length - 1;
+variantStepper.setRange(Math.min(minVariantCount, availableVariants), availableVariants);
+let variantCount = variantStepper.set(loadVariantCount());
 let dragging = false;
 
 // Per reference word, so manual grouping survives the iframe being rebuilt (e.g. another variant count).
@@ -20,6 +41,67 @@ const storageKey = "levenshteinRing:" + graphData.reference;
 const savedState = loadSavedState();
 let savedAngles = savedState.angles || {};
 const hiddenIds = new Set(savedState.hidden || []);
+
+// A − / number / + control. Valid values apply while typing, without rewriting the text, so "1" can
+// still become "12"; Enter or blur then snaps anything else into range, and an empty field keeps the
+// last value. `set` updates the control without calling `onChange` and returns the clamped value.
+function createStepper(id, onChange) {
+  const input = d3.select("#" + id);
+  const decrease = d3.select("#" + id + "-decrease");
+  const increase = d3.select("#" + id + "-increase");
+  let value = +input.property("value");
+  const min = () => +input.attr("min");
+  const max = () => +input.attr("max");
+
+  function show(next) {
+    value = next;
+    decrease.property("disabled", next <= min());
+    increase.property("disabled", next >= max());
+  }
+
+  function set(next) {
+    const clamped = Math.min(max(), Math.max(min(), Math.round(next)));
+    input.property("value", clamped);
+    show(clamped);
+    return clamped;
+  }
+
+  function change(next) {
+    const previous = value;
+    if (set(next) !== previous) onChange(value);
+  }
+
+  decrease.on("click", () => change(value - 1));
+  increase.on("click", () => change(value + 1));
+  input.on("input", function() {
+    const next = this.valueAsNumber;
+    if (Number.isInteger(next) && next >= min() && next <= max() && next !== value) {
+      show(next);
+      onChange(next);
+    }
+  });
+  input.on("change", function() {
+    change(Number.isNaN(this.valueAsNumber) ? value : this.valueAsNumber);
+  });
+
+  return {set, setRange(low, high) { input.attr("min", low).attr("max", high); }};
+}
+
+function loadVariantCount() {
+  try {
+    return +sessionStorage.getItem(variantCountKey) || defaultVariantCount;
+  } catch {
+    return defaultVariantCount;
+  }
+}
+
+function saveVariantCount() {
+  try {
+    sessionStorage.setItem(variantCountKey, variantCount);
+  } catch {
+    // Storage can be blocked; the count then just starts at the default next time.
+  }
+}
 
 function loadSavedState() {
   try {
@@ -80,8 +162,8 @@ function edgeDash(distance) {
   return distance === 1 ? null : (Math.max(3, distance + 2) + " " + Math.max(3, distance + 1));
 }
 
-// Shrink hypothesis nodes and labels as more variants are shown so rings stay readable.
-const nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, graphData.nodes.length - 1))));
+// Shrinks hypothesis nodes and labels as more variants are shown so rings stay readable.
+let nodeScale = 1;
 
 // Keeps the first ring clear of the centre so the reference and its distance-1 variants don't cover
 // each other; the remaining rings share the rest of the space evenly.
@@ -151,7 +233,7 @@ function layout(nodes, edges, ringRadius) {
   const reference = nodes.find(d => d.kind === "reference");
   if (reference) { reference.fx = center.x; reference.fy = center.y; }
 
-  const maxEdge = Math.max(1, graphData.max_edge_distance);
+  const maxEdge = Math.max(1, d3.max(edges, e => e.distance) || 1);
   const links = edges.map(e => ({source: e.source, target: e.target, distance: e.distance}));
   const simulation = d3.forceSimulation(nodes)
     .force("radial", d3.forceRadial(d => ringRadius(d.distance), center.x, center.y).strength(1))
@@ -183,10 +265,16 @@ function render() {
     return;
   }
   message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges or hide it (click empty space to clear); drag a node along its ring to group variants.");
-  const maxDistance = Math.max(1, graphData.max_distance);
+  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabel + ".");
+  nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
+  // Variants arrive ranked, so the first n hypothesis nodes are the top n.
+  const nodes = graphData.nodes.slice(0, variantCount + 1).map(d => ({...d}));
+  const shownIds = new Set(nodes.map(d => d.id));
+  const edges = graphData.edges.filter(e => shownIds.has(e.source) && shownIds.has(e.target));
+  if (!shownIds.has(selectedId)) selectedId = null;
+  const maxDistance = Math.max(1, d3.max(nodes, d => d.distance));
   const ringRadius = ringScale(maxDistance);
-  const nodes = graphData.nodes.map(d => ({...d}));
-  const positions = layout(nodes, graphData.edges, ringRadius);
+  const positions = layout(nodes, edges, ringRadius);
 
   const rings = root.append("g").attr("class", "rings");
   for (let distance = 1; distance <= maxDistance; distance++) {
@@ -205,7 +293,7 @@ function render() {
     .attr("x", d => (positions.get(d.source).x + positions.get(d.target).x) / 2)
     .attr("y", d => (positions.get(d.source).y + positions.get(d.target).y) / 2);
 
-  const edgeSelection = edgeLayer.selectAll("line").data(graphData.edges).join("line")
+  const edgeSelection = edgeLayer.selectAll("line").data(edges).join("line")
     .call(positionEdges)
     .attr("stroke", colors.edge)
     .attr("stroke-dasharray", d => edgeDash(d.distance))
@@ -253,7 +341,7 @@ function render() {
 
     // Fade every node that is not the selection, one of its visible neighbours, or the reference.
     const neighbours = new Set([selectedId]);
-    graphData.edges.filter(highlighted).forEach(d => { neighbours.add(d.source); neighbours.add(d.target); });
+    edges.filter(highlighted).forEach(d => { neighbours.add(d.source); neighbours.add(d.target); });
     nodeSelection
       .style("display", n => hiddenIds.has(n.id) ? "none" : null)
       .attr("opacity", n => selectedId === null || n.kind === "reference" || neighbours.has(n.id) ? 1 : 0.2);
@@ -262,7 +350,7 @@ function render() {
         : (n.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke))
       .attr("stroke-width", n => n.id === selectedId ? 3.5 : 1.5);
 
-    edgeLabelLayer.selectAll("text").data(graphData.edges.filter(highlighted)).join("text")
+    edgeLabelLayer.selectAll("text").data(edges.filter(highlighted)).join("text")
       .call(positionEdgeLabels)
       .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 11).attr("font-weight", 700)
       .attr("fill", colors.highlight)
@@ -326,30 +414,6 @@ function render() {
     selectedId = null;
     updateEdges();
   });
-  function applyEdgeThreshold(value) {
-    edgeThreshold = value;
-    edgeDecrease.property("disabled", value <= 1);
-    edgeIncrease.property("disabled", value >= maxEdgeThreshold);
-    updateEdges();
-  }
-
-  function setEdgeThreshold(value) {
-    const clamped = Math.min(maxEdgeThreshold, Math.max(1, Math.round(value)));
-    edgeInput.property("value", clamped);
-    applyEdgeThreshold(clamped);
-  }
-
-  edgeDecrease.on("click", () => setEdgeThreshold(edgeThreshold - 1));
-  edgeIncrease.on("click", () => setEdgeThreshold(edgeThreshold + 1));
-  // While typing, apply valid values but leave the text alone so "1" can still become "12".
-  edgeInput.on("input", function() {
-    const value = this.valueAsNumber;
-    if (Number.isInteger(value) && value >= 1 && value <= maxEdgeThreshold) applyEdgeThreshold(value);
-  });
-  // On Enter or blur, snap whatever was typed back into range; an empty field keeps the last value.
-  edgeInput.on("change", function() {
-    setEdgeThreshold(Number.isNaN(this.valueAsNumber) ? edgeThreshold : this.valueAsNumber);
-  });
   hideSelected.on("click", () => {
     hiddenIds.add(selectedId);
     selectedId = null;
@@ -361,7 +425,11 @@ function render() {
     saveState();
     updateEdges();
   });
-  setEdgeThreshold(edgeThreshold);
+  edgeStepper.setRange(1, Math.max(1, d3.max(edges, d => d.distance) || 1));
+  // A distance the user picked stays as variants are added; otherwise follow the default for this count.
+  edgeThreshold = edgeStepper.set(edgeThresholdChosen ? edgeThreshold : graphData.default_edge_distance_by_count[variantCount]);
+  refreshEdges = updateEdges;
+  updateEdges();
 
   d3.select("#reset-layout").on("click", () => {
     savedAngles = {};

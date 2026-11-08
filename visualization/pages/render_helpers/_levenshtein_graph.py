@@ -30,6 +30,7 @@ _CONTROL_STYLE = """
     background: var(--control-bg); color: var(--control-text); border: 1px solid var(--control-border);
     border-radius: 4px; padding: 3px 9px; font: inherit;
   }
+  #ring-graph .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 8px; }
   #ring-graph button { cursor: pointer; }
   #ring-graph button:disabled { opacity: 0.45; cursor: default; }
   #ring-graph summary { cursor: pointer; }
@@ -63,15 +64,16 @@ def _to_js(value) -> str:
     return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
 
 
-def render(graph: dict, dark: bool = False) -> None:
+def render(graph: dict, rank_label: str, dark: bool = False) -> None:
     """Render a concentric-ring graph in an isolated component.
 
     Nodes are held on their ring by `forceRadial`; pairwise link forces pull
     lexically close variants together along the ring. The simulation runs to
     completion before drawing, so the layout is static and deterministic.
+
+    `graph` holds every selectable variant; the iframe picks how many to show,
+    so changing the count needs no Streamlit rerun.
     """
-    max_edge = max(1, graph.get("max_edge_distance", 1))
-    default_edge = graph["default_edge_distance"]
     colors = _DARK if dark else _LIGHT
 
     st.iframe(
@@ -79,13 +81,21 @@ def render(graph: dict, dark: bool = False) -> None:
 {_CONTROL_STYLE}
 <div id="ring-graph" style="font-family: sans-serif; width: 100%; color: {colors['text']};
      --control-bg: {colors['tooltip_bg']}; --control-border: {colors['tooltip_border']}; --control-text: {colors['text']};">
-  <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:8px;">
+  <div class="toolbar">
+    <div class="stepper" role="group" aria-label="Number of variants">
+      <span>Number of variants</span>
+      <button id="variant-count-decrease" type="button" aria-label="Decrease number of variants">−</button>
+      <input id="variant-count" type="number" min="1" max="1" value="1" step="1">
+      <button id="variant-count-increase" type="button" aria-label="Increase number of variants">+</button>
+    </div>
     <div class="stepper" role="group" aria-label="Show edges up to distance">
       <span>Show edges up to distance</span>
-      <button id="edge-decrease" type="button" aria-label="Decrease edge distance">−</button>
-      <input id="edge-distance" type="number" min="1" max="{max_edge}" value="{default_edge}" step="1">
-      <button id="edge-increase" type="button" aria-label="Increase edge distance">+</button>
+      <button id="edge-distance-decrease" type="button" aria-label="Decrease edge distance">−</button>
+      <input id="edge-distance" type="number" min="1" max="1" value="1" step="1">
+      <button id="edge-distance-increase" type="button" aria-label="Increase edge distance">+</button>
     </div>
+  </div>
+  <div class="toolbar">
     <button id="hide-selected" type="button" disabled>Hide selected</button>
     <details id="hidden-menu" hidden>
       <summary id="hidden-summary"></summary>
@@ -97,6 +107,7 @@ def render(graph: dict, dark: bool = False) -> None:
     <button id="reset-layout" type="button">Reset layout</button>
     <button id="export-png" type="button">Export PNG</button>
   </div>
+  <div id="variant-summary" style="color:{colors['muted']};"></div>
   <div id="graph-message" style="color:{colors['muted']};"></div>
   <svg id="graph-svg" width="100%" height="620" viewBox="0 0 900 620"
        role="img" aria-label="Levenshtein ring graph"></svg>
@@ -105,8 +116,9 @@ def render(graph: dict, dark: bool = False) -> None:
 <script>
 const graphData = {_to_js(graph)};
 const colors = {_to_js(colors)};
+const rankLabel = {_to_js(rank_label)};
 </script>
 <script>{_graph_script()}</script>
 """,
-        height=750,
+        height=800,
     )

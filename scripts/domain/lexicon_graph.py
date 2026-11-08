@@ -55,6 +55,22 @@ def default_edge_threshold(distances: Iterable[int],
     return min(median, max(ordered[0], ordered[max_visible_edges] - 1))
 
 
+def _default_edge_thresholds_by_count(words: list[str], edges: list[dict[str, Any]]) -> list[int]:
+    """`default_edge_threshold` for showing only the first n of `words`, indexed by n."""
+    position = {f"hypothesis:{word}": index for index, word in enumerate(words, start=1)}
+    # An edge appears once its later word is shown, and `target` is always the later one.
+    added_at: list[list[int]] = [[] for _ in range(len(words) + 1)]
+    for edge in edges:
+        added_at[position[edge["target"]]].append(edge["distance"])
+
+    visible: list[int] = []
+    thresholds = []
+    for new_distances in added_at:
+        visible.extend(new_distances)
+        thresholds.append(default_edge_threshold(visible))
+    return thresholds
+
+
 def build_levenshtein_ring_graph(
     rows: pd.DataFrame,
     reference_word: str,
@@ -100,7 +116,7 @@ def build_levenshtein_ring_graph(
             "edges": [],
             "max_distance": 0,
             "max_edge_distance": 0,
-            "default_edge_distance": 1,
+            "default_edge_distance_by_count": [1],
             "shown_count": 0,
             "candidate_count": 0,
             "rank_by": rank_by,
@@ -171,7 +187,7 @@ def build_levenshtein_ring_graph(
         "edges": edges,
         "max_distance": max((node["distance"] for node in nodes), default=0),
         "max_edge_distance": max((edge["distance"] for edge in edges), default=0),
-        "default_edge_distance": default_edge_threshold(edge["distance"] for edge in edges),
+        "default_edge_distance_by_count": _default_edge_thresholds_by_count(words, edges),
         "shown_count": len(grouped),
         "candidate_count": candidate_count,
         "rank_by": rank_by,
