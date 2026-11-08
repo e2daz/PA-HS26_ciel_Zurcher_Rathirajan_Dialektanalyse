@@ -4,6 +4,8 @@ const root = svg.append("g");
 const zoom = d3.zoom().scaleExtent([0.45, 4]).on("zoom", (event) => root.attr("transform", event.transform));
 svg.call(zoom);
 const message = d3.select("#graph-message");
+const hideSelected = d3.select("#hide-selected");
+const hiddenMenu = d3.select("#hidden-menu");
 const edgeInput = d3.select("#edge-distance");
 const edgeDecrease = d3.select("#edge-decrease");
 const edgeIncrease = d3.select("#edge-increase");
@@ -17,6 +19,7 @@ let dragging = false;
 const storageKey = "levenshteinRing:" + graphData.reference;
 const savedState = loadSavedState();
 let savedAngles = savedState.angles || {};
+const hiddenIds = new Set(savedState.hidden || []);
 
 function loadSavedState() {
   try {
@@ -28,7 +31,7 @@ function loadSavedState() {
 
 function saveState() {
   try {
-    sessionStorage.setItem(storageKey, JSON.stringify({angles: savedAngles}));
+    sessionStorage.setItem(storageKey, JSON.stringify({angles: savedAngles, hidden: [...hiddenIds]}));
   } catch {
     // Storage can be blocked; the graph still works, the arrangement just isn't remembered.
   }
@@ -137,7 +140,7 @@ function render() {
     d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
     return;
   }
-  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges (click empty space to clear); drag a node along its ring to group variants.");
+  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges or hide it (click empty space to clear); drag a node along its ring to group variants.");
   const maxDistance = Math.max(1, graphData.max_distance);
   const ringStep = Math.min(115, 270 / maxDistance);
   const nodes = graphData.nodes.map(d => ({...d}));
@@ -176,11 +179,27 @@ function render() {
   const edgeLabelLayer = root.append("g").attr("class", "edge-labels").style("pointer-events", "none");
 
   const isIncident = d => selectedId !== null && (d.source === selectedId || d.target === selectedId);
+  const isEdgeShown = d => !hiddenIds.has(d.source) && !hiddenIds.has(d.target);
+
+  function updateHiddenMenu() {
+    const hiddenNodes = nodes.filter(d => hiddenIds.has(d.id));
+    hiddenMenu.property("hidden", hiddenNodes.length === 0);
+    if (hiddenNodes.length === 0) hiddenMenu.property("open", false);
+    d3.select("#hidden-summary").text("Hidden (" + hiddenNodes.length + ")");
+    d3.select("#hidden-list").selectAll("button").data(hiddenNodes, d => d.id).join("button")
+      .attr("type", "button").attr("title", "Show this variant again").text(d => d.label)
+      .on("click", (event, d) => {
+        hiddenIds.delete(d.id);
+        saveState();
+        updateEdges();
+      });
+  }
 
   function updateEdges() {
     const visible = edgeThreshold;
-    const highlighted = d => isIncident(d) && d.distance <= visible;
+    const highlighted = d => isIncident(d) && isEdgeShown(d) && d.distance <= visible;
     edgeSelection
+      .style("display", d => isEdgeShown(d) ? null : "none")
       .attr("stroke", d => highlighted(d) ? colors.highlight : colors.edge)
       .attr("opacity", d => {
         if (selectedId === null) return edgeOpacity(d.distance, visible);
@@ -194,6 +213,7 @@ function render() {
     const neighbours = new Set([selectedId]);
     graphData.edges.filter(highlighted).forEach(d => { neighbours.add(d.source); neighbours.add(d.target); });
     nodeSelection
+      .style("display", n => hiddenIds.has(n.id) ? "none" : null)
       .attr("opacity", n => selectedId === null || n.kind === "reference" || neighbours.has(n.id) ? 1 : 0.2);
     nodeSelection.select("circle")
       .attr("stroke", n => n.id === selectedId ? colors.highlight
@@ -206,6 +226,9 @@ function render() {
       .attr("fill", colors.highlight)
       .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
       .text(d => d.distance);
+
+    hideSelected.property("disabled", selectedId === null);
+    updateHiddenMenu();
   }
 
   const nodeLayer = root.append("g").attr("class", "nodes");
@@ -284,6 +307,17 @@ function render() {
   // On Enter or blur, snap whatever was typed back into range; an empty field keeps the last value.
   edgeInput.on("change", function() {
     setEdgeThreshold(Number.isNaN(this.valueAsNumber) ? edgeThreshold : this.valueAsNumber);
+  });
+  hideSelected.on("click", () => {
+    hiddenIds.add(selectedId);
+    selectedId = null;
+    saveState();
+    updateEdges();
+  });
+  d3.select("#show-all-hidden").on("click", () => {
+    nodes.forEach(d => hiddenIds.delete(d.id));
+    saveState();
+    updateEdges();
   });
   setEdgeThreshold(edgeThreshold);
 

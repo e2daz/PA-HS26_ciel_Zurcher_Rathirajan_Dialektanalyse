@@ -32,6 +32,14 @@ _CONTROL_STYLE = """
   }
   #ring-graph button { cursor: pointer; }
   #ring-graph button:disabled { opacity: 0.45; cursor: default; }
+  #ring-graph summary { cursor: pointer; }
+  #ring-graph #hidden-menu { position: relative; }
+  #ring-graph .hidden-panel {
+    position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 170px; max-height: 300px;
+    overflow-y: auto; padding: 8px; background: var(--control-bg); border: 1px solid var(--control-border);
+    border-radius: 4px; box-shadow: 0 2px 6px #0003;
+  }
+  #ring-graph #hidden-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   #ring-graph .stepper { display: flex; align-items: center; gap: 4px; }
   #ring-graph .stepper span { margin-right: 4px; }
   #ring-graph .stepper input { width: 3.2em; text-align: center; appearance: textfield; -moz-appearance: textfield; }
@@ -79,6 +87,14 @@ def render(graph: dict, dark: bool = False) -> None:
       <input id="edge-distance" type="number" min="1" max="{max_edge}" value="{default_edge}" step="1">
       <button id="edge-increase" type="button" aria-label="Increase edge distance">+</button>
     </div>
+    <button id="hide-selected" type="button" disabled>Hide selected</button>
+    <details id="hidden-menu" hidden>
+      <summary id="hidden-summary"></summary>
+      <div class="hidden-panel">
+        <button id="show-all-hidden" type="button">Show all</button>
+        <div id="hidden-list"></div>
+      </div>
+    </details>
     <button id="reset-layout" type="button">Reset layout</button>
   </div>
   <div id="graph-message" style="color:{colors['muted']};"></div>
