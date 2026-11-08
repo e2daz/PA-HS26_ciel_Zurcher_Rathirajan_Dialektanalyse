@@ -187,9 +187,10 @@ def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_region
                  "occurrences, or highest mean alignment similarity to the reference.",
         )
     with col_top_n:
-        top_n = st.slider("Number of variants", min_value=5, max_value=100, value=10, step=5,
-                          key="lev_graph_top_n",
-                          help="Edges grow quadratically; use the edge-distance slider to thin them out.")
+        top_n = st.number_input("Number of variants", min_value=5, max_value=100, value=10, step=5,
+                                key="lev_graph_top_n",
+                                help="Use − / + or type a number. Edges grow quadratically; lower the "
+                                     "edge distance below to thin them out.")
 
     graph = build_levenshtein_ring_graph(dit_rows, word, top_n=top_n, rank_by=rank_by,
                                          tfidf_by_hypothesis=tfidf_by_hypothesis)

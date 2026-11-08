@@ -4,8 +4,11 @@ const root = svg.append("g");
 const zoom = d3.zoom().scaleExtent([0.45, 4]).on("zoom", (event) => root.attr("transform", event.transform));
 svg.call(zoom);
 const message = d3.select("#graph-message");
-const edgeSlider = d3.select("#edge-distance");
-const edgeValue = d3.select("#edge-distance-value");
+const edgeInput = d3.select("#edge-distance");
+const edgeDecrease = d3.select("#edge-decrease");
+const edgeIncrease = d3.select("#edge-increase");
+const maxEdgeThreshold = +edgeInput.attr("max");
+let edgeThreshold = +edgeInput.attr("value");
 let selectedId = null;
 
 function showTooltip(event, lines) {
@@ -97,6 +100,7 @@ function render() {
   root.selectAll("*").remove();
   if (graphData.nodes.length <= 1) {
     message.text("No hypothesis variants are available for this reference word.");
+    d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
     return;
   }
   message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges (click empty space to clear).");
@@ -126,7 +130,7 @@ function render() {
   const isIncident = d => selectedId !== null && (d.source === selectedId || d.target === selectedId);
 
   function updateEdges() {
-    const visible = +edgeSlider.node().value;
+    const visible = edgeThreshold;
     const highlighted = d => isIncident(d) && d.distance <= visible;
     edgeSelection
       .attr("stroke", d => highlighted(d) ? colors.highlight : colors.edge)
@@ -192,11 +196,31 @@ function render() {
     selectedId = null;
     updateEdges();
   });
-  edgeSlider.on("input", function() {
-    edgeValue.text(this.value);
+  function applyEdgeThreshold(value) {
+    edgeThreshold = value;
+    edgeDecrease.property("disabled", value <= 1);
+    edgeIncrease.property("disabled", value >= maxEdgeThreshold);
     updateEdges();
+  }
+
+  function setEdgeThreshold(value) {
+    const clamped = Math.min(maxEdgeThreshold, Math.max(1, Math.round(value)));
+    edgeInput.property("value", clamped);
+    applyEdgeThreshold(clamped);
+  }
+
+  edgeDecrease.on("click", () => setEdgeThreshold(edgeThreshold - 1));
+  edgeIncrease.on("click", () => setEdgeThreshold(edgeThreshold + 1));
+  // While typing, apply valid values but leave the text alone so "1" can still become "12".
+  edgeInput.on("input", function() {
+    const value = this.valueAsNumber;
+    if (Number.isInteger(value) && value >= 1 && value <= maxEdgeThreshold) applyEdgeThreshold(value);
   });
-  updateEdges();
+  // On Enter or blur, snap whatever was typed back into range; an empty field keeps the last value.
+  edgeInput.on("change", function() {
+    setEdgeThreshold(Number.isNaN(this.valueAsNumber) ? edgeThreshold : this.valueAsNumber);
+  });
+  setEdgeThreshold(edgeThreshold);
 }
 
 d3.select("#reset-view").on("click", () => svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity));

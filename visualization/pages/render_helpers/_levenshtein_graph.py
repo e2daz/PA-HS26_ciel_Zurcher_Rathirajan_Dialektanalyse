@@ -23,6 +23,24 @@ _DARK = {
 }
 
 
+# Not part of the f-string below, so the CSS braces stay single; colours arrive as CSS variables.
+_CONTROL_STYLE = """
+<style>
+  #ring-graph button, #ring-graph input, #ring-graph summary {
+    background: var(--control-bg); color: var(--control-text); border: 1px solid var(--control-border);
+    border-radius: 4px; padding: 3px 9px; font: inherit;
+  }
+  #ring-graph button { cursor: pointer; }
+  #ring-graph button:disabled { opacity: 0.45; cursor: default; }
+  #ring-graph .stepper { display: flex; align-items: center; gap: 4px; }
+  #ring-graph .stepper span { margin-right: 4px; }
+  #ring-graph .stepper input { width: 3.2em; text-align: center; appearance: textfield; -moz-appearance: textfield; }
+  #ring-graph .stepper input::-webkit-outer-spin-button,
+  #ring-graph .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+</style>
+"""
+
+
 @cache
 def _d3_source() -> str:
     return _D3_PATH.read_text(encoding="utf-8")
@@ -51,12 +69,16 @@ def render(graph: dict, dark: bool = False) -> None:
 
     st.iframe(
         f"""
-<div id="ring-graph" style="font-family: sans-serif; width: 100%; color: {colors['text']};">
+{_CONTROL_STYLE}
+<div id="ring-graph" style="font-family: sans-serif; width: 100%; color: {colors['text']};
+     --control-bg: {colors['tooltip_bg']}; --control-border: {colors['tooltip_border']}; --control-text: {colors['text']};">
   <div style="display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-bottom:8px;">
-    <label>Show edges up to distance
-      <input id="edge-distance" type="range" min="1" max="{max_edge}" value="{default_edge}" step="1">
-      <strong id="edge-distance-value">{default_edge}</strong>
-    </label>
+    <div class="stepper" role="group" aria-label="Show edges up to distance">
+      <span>Show edges up to distance</span>
+      <button id="edge-decrease" type="button" aria-label="Decrease edge distance">−</button>
+      <input id="edge-distance" type="number" min="1" max="{max_edge}" value="{default_edge}" step="1">
+      <button id="edge-increase" type="button" aria-label="Increase edge distance">+</button>
+    </div>
     <button id="reset-view" type="button">Reset view</button>
   </div>
   <div id="graph-message" style="color:{colors['muted']};"></div>
