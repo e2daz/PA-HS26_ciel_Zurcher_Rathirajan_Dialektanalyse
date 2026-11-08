@@ -71,8 +71,7 @@ def render(graph: dict, dark: bool = False) -> None:
     completion before drawing, so the layout is static and deterministic.
     """
     max_edge = max(1, graph.get("max_edge_distance", 1))
-    edge_distances = sorted(edge["distance"] for edge in graph["edges"])
-    default_edge = edge_distances[len(edge_distances) // 2] if edge_distances else max_edge
+    default_edge = graph["default_edge_distance"]
     colors = _DARK if dark else _LIGHT
 
     st.iframe(
@@ -109,5 +108,5 @@ const colors = {_to_js(colors)};
 </script>
 <script>{_graph_script()}</script>
 """,
-        height=680,
+        height=750,
     )

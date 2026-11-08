@@ -9,7 +9,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "domain"))
 
-from lexicon_graph import build_levenshtein_ring_graph, wrap_label
+from lexicon_graph import build_levenshtein_ring_graph, default_edge_threshold, wrap_label
 
 
 class TestLevenshteinRingGraph(unittest.TestCase):
@@ -105,6 +105,21 @@ class TestLevenshteinRingGraph(unittest.TestCase):
 
         self.assertEqual(graph["nodes"][0]["label_lines"], ["ref"])
         self.assertEqual("".join(graph["nodes"][1]["label_lines"]), "bundesversammlung")
+
+    def test_default_edge_threshold_is_median_for_small_graphs(self):
+        self.assertEqual(default_edge_threshold([1, 2, 3, 4, 5]), 3)
+        self.assertEqual(default_edge_threshold([]), 1)
+
+    def test_default_edge_threshold_caps_visible_edges_for_large_graphs(self):
+        distances = [1] * 100 + [2] * 100 + [3] * 100
+
+        threshold = default_edge_threshold(distances, max_visible_edges=150)
+
+        self.assertEqual(threshold, 1)
+        self.assertLessEqual(sum(d <= threshold for d in distances), 150)
+
+    def test_default_edge_threshold_keeps_smallest_distance_visible(self):
+        self.assertEqual(default_edge_threshold([4] * 200, max_visible_edges=150), 4)
 
     def test_empty_candidates_returns_reference_only(self):
         rows = pd.DataFrame({

@@ -91,6 +91,37 @@ function labelFontSize(node) {
   return node.kind === "reference" ? 14 : Math.max(10.5, 12 * nodeScale);
 }
 
+// Half the angular room a node needs, in px: labels are often wider than their circle.
+function nodeFootprint(node) {
+  const longestLine = d3.max(node.label_lines, line => line.length);
+  return Math.max(nodeRadius(node), longestLine * labelFontSize(node) * 0.3) + 3;
+}
+
+// Forces only approximate spacing, and snapping onto the ring can undo it, so finish per ring.
+// A ring too full for every label shares the available room evenly.
+function spreadAlongRings(nodes, ringStep) {
+  const rings = d3.group(nodes.filter(d => d.kind !== "reference"), d => d.distance);
+  for (const [distance, ringNodes] of rings) {
+    if (ringNodes.length < 2) continue;
+    ringNodes.sort((a, b) => a.angle - b.angle);
+    const wanted = ringNodes.map(node => nodeFootprint(node) / (distance * ringStep));
+    const fit = Math.min(1, Math.PI / d3.sum(wanted));
+    const halfAngle = wanted.map(angle => angle * fit);
+    for (let pass = 0; pass < 60; pass++) {
+      ringNodes.forEach((node, index) => {
+        const nextIndex = (index + 1) % ringNodes.length;
+        const next = ringNodes[nextIndex];
+        const gap = next.angle - node.angle + (nextIndex === 0 ? 2 * Math.PI : 0);
+        const overlap = halfAngle[index] + halfAngle[nextIndex] - gap;
+        if (overlap > 0) {
+          node.angle -= overlap / 2;
+          next.angle += overlap / 2;
+        }
+      });
+    }
+  }
+}
+
 // The only way a hypothesis node gets a position: the radius always comes from its Levenshtein distance.
 function placeOnRing(node, angle, ringStep) {
   node.angle = angle;
@@ -120,13 +151,15 @@ function layout(nodes, edges, ringStep) {
       .strength(d => 0.08 * Math.pow(1 - (d.distance - 1) / maxEdge, 2)))
     // Repulsion spreads variants around the full ring; links only decide who neighbours whom.
     .force("charge", d3.forceManyBody().strength(d => d.kind === "reference" ? 0 : -420))
-    .force("collide", d3.forceCollide(d => nodeRadius(d) + 6))
+    .force("collide", d3.forceCollide(d => nodeFootprint(d) + 3))
     .stop();
   for (let i = 0; i < 300; i++) simulation.tick();
   // Snap back onto the ring so ring membership stays exact.
+  for (const node of nodes) node.angle = Math.atan2(node.y - center.y, node.x - center.x);
+  spreadAlongRings(nodes, ringStep);
   for (const node of nodes) {
     if (node.kind === "reference") continue;
-    placeOnRing(node, Math.atan2(node.y - center.y, node.x - center.x), ringStep);
+    placeOnRing(node, node.angle, ringStep);
     node.defaultAngle = node.angle;
     if (savedAngles[node.id] !== undefined) placeOnRing(node, savedAngles[node.id], ringStep);
   }
