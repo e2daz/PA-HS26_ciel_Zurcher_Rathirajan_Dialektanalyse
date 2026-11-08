@@ -96,6 +96,7 @@ def render(graph: dict, dark: bool = False) -> None:
       </div>
     </details>
     <button id="reset-layout" type="button">Reset layout</button>
+    <button id="export-png" type="button">Export PNG</button>
   </div>
   <div id="graph-message" style="color:{colors['muted']};"></div>
   <svg id="graph-svg" width="100%" height="620" viewBox="0 0 900 620"

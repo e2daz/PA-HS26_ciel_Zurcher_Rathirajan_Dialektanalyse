@@ -332,4 +332,45 @@ function render() {
   });
 }
 
+// Draws what is on screen right now: zoom, moved and hidden nodes, and the current selection.
+function exportPng() {
+  const box = svg.node().getBoundingClientRect();
+  // The viewBox is letterboxed in a wider iframe, and panning can bring those margins into view.
+  const scale = Math.min(box.width / width, box.height / height);
+  const viewWidth = box.width / scale, viewHeight = box.height / scale;
+  const clone = svg.node().cloneNode(true);
+  clone.setAttribute("viewBox", [(width - viewWidth) / 2, (height - viewHeight) / 2, viewWidth, viewHeight].join(" "));
+  clone.setAttribute("width", viewWidth);
+  clone.setAttribute("height", viewHeight);
+  clone.setAttribute("font-family", "sans-serif");
+  const svgUrl = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], {type: "image/svg+xml"}));
+
+  const image = new Image();
+  image.onerror = () => {
+    URL.revokeObjectURL(svgUrl);
+    message.text("The PNG could not be created in this browser.");
+  };
+  image.onload = () => {
+    const pixelRatio = 3;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewWidth * pixelRatio);
+    canvas.height = Math.round(viewHeight * pixelRatio);
+    const context = canvas.getContext("2d");
+    // An SVG has no background of its own; the halo colour is the page background.
+    context.fillStyle = colors.label_halo;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(svgUrl);
+    canvas.toBlob(blob => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "levenshtein_" + graphData.reference.replace(/[\\/:*?"<>|\s]+/g, "_") + ".png";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }, "image/png");
+  };
+  image.src = svgUrl;
+}
+
+d3.select("#export-png").on("click", exportPng);
 render();
