@@ -110,8 +110,6 @@ function render() {
     const radius = distance * ringStep;
     rings.append("circle").attr("cx", center.x).attr("cy", center.y).attr("r", radius)
       .attr("fill", "none").attr("stroke", colors.ring).attr("stroke-dasharray", "3 4");
-    rings.append("text").attr("x", center.x + 5).attr("y", center.y - radius + 16)
-      .attr("fill", colors.muted).attr("font-size", 12).text("distance " + distance);
   }
 
   const edgeLayer = root.append("g").attr("class", "edges");
@@ -179,6 +177,16 @@ function render() {
   nodeSelection.append("text").attr("text-anchor", "middle").attr("dy", 4)
     .attr("fill", colors.text)
     .attr("font-size", d => d.kind === "reference" ? 14 : Math.max(9, 12 * nodeScale)).text(d => d.label);
+
+  // Above the nodes so a node can never cover a ring's distance; ignores the pointer so nodes stay clickable.
+  const ringLabelLayer = root.append("g").attr("class", "ring-labels").style("pointer-events", "none");
+  for (let distance = 1; distance <= maxDistance; distance++) {
+    ringLabelLayer.append("text").attr("x", center.x).attr("y", center.y - distance * ringStep)
+      .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 12).attr("font-weight", 600)
+      .attr("fill", colors.muted)
+      .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+      .text(distance === maxDistance ? "distance " + distance : distance);
+  }
 
   svg.on("click", () => {
     selectedId = null;
