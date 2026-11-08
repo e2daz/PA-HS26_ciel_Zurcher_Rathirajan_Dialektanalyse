@@ -27,7 +27,7 @@ def wrap_label(word: str, max_chars: int = LABEL_LINE_CHARS) -> list[str]:
     """
     if max_chars <= 0:
         raise ValueError(f"max_chars must be positive; got {max_chars}")
-    line_count = max(1, -len(word) // max_chars * -1)
+    line_count = max(1, (len(word) + max_chars - 1) // max_chars)
     base, extra = divmod(len(word), line_count)
     lines, start = [], 0
     for index in range(line_count):
