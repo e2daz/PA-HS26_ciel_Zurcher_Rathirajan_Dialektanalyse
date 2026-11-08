@@ -9,7 +9,7 @@ import pandas as pd
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "domain"))
 
-from lexicon_graph import build_levenshtein_ring_graph
+from lexicon_graph import build_levenshtein_ring_graph, wrap_label
 
 
 class TestLevenshteinRingGraph(unittest.TestCase):
@@ -83,6 +83,29 @@ class TestLevenshteinRingGraph(unittest.TestCase):
         self.assertTrue(all(edge["distance"] <= 1 for edge in graph["edges"]))
         self.assertEqual(graph["max_edge_distance"], 1)
 
+    def test_wrap_label_splits_long_words_evenly_without_losing_characters(self):
+        self.assertEqual(wrap_label("nicht"), ["nicht"])
+        self.assertEqual(wrap_label("abcdefgh"), ["abcdefgh"])
+        self.assertEqual(wrap_label("abcdefghi"), ["abcde", "fghi"])
+
+        word = "arbeitsnehmerinteressentenvertretungen"
+        lines = wrap_label(word)
+        self.assertEqual("".join(lines), word)
+        self.assertTrue(all(len(line) <= 8 for line in lines))
+
+    def test_wrap_label_handles_empty_word_and_rejects_invalid_width(self):
+        self.assertEqual(wrap_label(""), [""])
+        with self.assertRaises(ValueError):
+            wrap_label("wort", max_chars=0)
+
+    def test_nodes_carry_wrapped_label_lines(self):
+        rows = pd.DataFrame({"hypothesis_word": ["bundesversammlung"], "similarity": [0.5]})
+
+        graph = build_levenshtein_ring_graph(rows, "ref")
+
+        self.assertEqual(graph["nodes"][0]["label_lines"], ["ref"])
+        self.assertEqual("".join(graph["nodes"][1]["label_lines"]), "bundesversammlung")
+
     def test_empty_candidates_returns_reference_only(self):
         rows = pd.DataFrame({
             "hypothesis_word": [None, "ref"],
@@ -93,6 +116,7 @@ class TestLevenshteinRingGraph(unittest.TestCase):
 
         self.assertEqual(graph["candidate_count"], 0)
         self.assertEqual(len(graph["nodes"]), 1)
+        self.assertEqual(graph["nodes"][0]["label_lines"], ["ref"])
         self.assertEqual(graph["edges"], [])
 
 

@@ -15,6 +15,27 @@ _RANK_KEYS: dict[str, list[str]] = {
     "similarity": ["mean_similarity", "count"],
 }
 
+LABEL_LINE_CHARS = 8
+
+
+def wrap_label(word: str, max_chars: int = LABEL_LINE_CHARS) -> list[str]:
+    """Split a word into evenly long display lines of at most `max_chars`.
+
+    Transcribed words have no spaces or hyphens to break at, so the split is by
+    character. Even lines avoid a lone trailing letter; no hyphen is inserted
+    because it could be misread as part of the transcription.
+    """
+    if max_chars <= 0:
+        raise ValueError(f"max_chars must be positive; got {max_chars}")
+    line_count = max(1, -len(word) // max_chars * -1)
+    base, extra = divmod(len(word), line_count)
+    lines, start = [], 0
+    for index in range(line_count):
+        end = start + base + (index < extra)
+        lines.append(word[start:end])
+        start = end
+    return lines
+
 
 def build_levenshtein_ring_graph(
     rows: pd.DataFrame,
@@ -51,7 +72,13 @@ def build_levenshtein_ring_graph(
     if candidates.empty:
         return {
             "reference": reference_word,
-            "nodes": [{"id": "reference", "label": reference_word, "kind": "reference", "distance": 0}],
+            "nodes": [{
+                "id": "reference",
+                "label": reference_word,
+                "label_lines": wrap_label(reference_word),
+                "kind": "reference",
+                "distance": 0,
+            }],
             "edges": [],
             "max_distance": 0,
             "max_edge_distance": 0,
@@ -86,6 +113,7 @@ def build_levenshtein_ring_graph(
     nodes = [{
         "id": "reference",
         "label": reference_word,
+        "label_lines": wrap_label(reference_word),
         "kind": "reference",
         "distance": 0,
     }]
@@ -94,6 +122,7 @@ def build_levenshtein_ring_graph(
         nodes.append({
             "id": f"hypothesis:{word}",
             "label": word,
+            "label_lines": wrap_label(word),
             "kind": "hypothesis",
             "distance": int(Levenshtein.distance(reference_word, word)),
             "count": int(row["count"]),

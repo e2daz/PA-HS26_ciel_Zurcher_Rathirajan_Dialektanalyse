@@ -61,6 +61,10 @@ function nodeRadius(node) {
   return node.kind === "reference" ? 29 : (10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4)) * nodeScale;
 }
 
+function labelFontSize(node) {
+  return node.kind === "reference" ? 14 : Math.max(10.5, 12 * nodeScale);
+}
+
 function layout(nodes, edges, ringStep) {
   // Deterministic start: evenly spaced angles per ring, then let forces settle.
   const byDistance = d3.group(nodes, d => d.distance);
@@ -178,9 +182,15 @@ function render() {
     .attr("fill", d => d.kind === "reference" ? colors.ref_fill : colors.hyp_fill)
     .attr("stroke", d => d.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke)
     .attr("stroke-width", 1.5);
-  nodeSelection.append("text").attr("text-anchor", "middle").attr("dy", 4)
-    .attr("fill", colors.text)
-    .attr("font-size", d => d.kind === "reference" ? 14 : Math.max(9, 12 * nodeScale)).text(d => d.label);
+  // Long labels overflow the count-sized circles, so the halo keeps them readable on any background.
+  nodeSelection.append("text").attr("text-anchor", "middle")
+    .attr("fill", colors.text).attr("font-size", labelFontSize).attr("font-weight", 500)
+    .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+    .attr("stroke-linejoin", "round")
+    .selectAll("tspan").data(d => d.label_lines.map(line => ({line, total: d.label_lines.length}))).join("tspan")
+    .attr("x", 0)
+    .attr("dy", (d, i) => i === 0 ? ((1 - d.total) * 0.55 + 0.35) + "em" : "1.1em")
+    .text(d => d.line);
 
   // Above the nodes so a node can never cover a ring's distance; ignores the pointer so nodes stay clickable.
   const ringLabelLayer = root.append("g").attr("class", "ring-labels").style("pointer-events", "none");
