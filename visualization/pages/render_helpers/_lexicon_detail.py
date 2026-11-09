@@ -488,64 +488,71 @@ def _render_alignment_html(columns: list[dict], hyp_label: str,
     )
 
 
-def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
-    """One sentence expander: region + clip metadata, audio player, reference + hypotheses, alignment HTML,
-    and an optional technical alignment graph."""
-    path = row["path"]
+def _sentence_header(row: pd.Series) -> str:
+    """Region, demographics and the end of the clip ID, e.g. '**ZH** · f · 30-39 · …a1b2c3.flac'."""
     # SDS-200 demographics are sparse; only show gender/age when present (else they render as "nan").
     demographics = " · ".join(str(v) for v in (row["gender"], row["age"]) if pd.notna(v))
-    header = f"**{row['dialect_region']}**" + (f" · {demographics}" if demographics else "") + f" · …{path[-12:]}"
+    return f"**{row['dialect_region']}**" + (f" · {demographics}" if demographics else "") + f" · …{row['path'][-12:]}"
 
-    with st.expander(header):
-        st.markdown(f"**Clip ID:** `{path}`")
 
-        audio_file = resolve_audio_path(path, dataset)
-        if audio_file is None:
-            st.caption(f"Audio file not found locally: `{path}`")
-        elif not audio_unlocked():
-            # Audio is the only gated feature: without the session unlock we never call st.audio,
-            # so no media URL is minted and the clips can't be crawled.
-            st.caption("Audio locked, enter the password above to enable playback.")
-        else:
-            audio_key = f"audio_loaded_{path}"
-            loaded = st.session_state.get(audio_key, False)
-            if not loaded and st.button("▶ Load audio", key=f"load_{path}"):
-                st.session_state[audio_key] = True
-                loaded = True
-            if loaded:
-                st.audio(str(audio_file))
+def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
+    """One sentence as an expander holding its details."""
+    with st.expander(_sentence_header(row)):
+        _render_sentence_details(row, sentence_rows, word, dataset)
 
-        st.markdown(
-            f"**Reference:** {row['reference']}  \n"
-            f"**Hypothesis DIT:** {row['dit_hypothesis']}  \n"
-            f"**Hypothesis DAT:** {row['dat_hypothesis']}"
-        )
 
-        dat_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-aware"])
-        dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-ignorant"])
-        dat_dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dat-dit"])
+def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
+    """Clip ID, audio player, reference + hypotheses, alignment HTML, and an optional technical alignment graph."""
+    path = row["path"]
+    st.markdown(f"**Clip ID:** `{path}`")
 
-        st.markdown(_render_alignment_html(dit_cols, "Hypothesis DIT", searched_word=word),
-                    unsafe_allow_html=True)
-        st.markdown(_render_alignment_html(dat_cols, "Hypothesis DAT", searched_word=word),
-                    unsafe_allow_html=True)
-        st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
-                                           searched_word=None, ref_label="Hypothesis DAT"),
-                    unsafe_allow_html=True)
+    audio_file = resolve_audio_path(path, dataset)
+    if audio_file is None:
+        st.caption(f"Audio file not found locally: `{path}`")
+    elif not audio_unlocked():
+        # Audio is the only gated feature: without the session unlock we never call st.audio,
+        # so no media URL is minted and the clips can't be crawled.
+        st.caption("Audio locked, enter the password above to enable playback.")
+    else:
+        audio_key = f"audio_loaded_{path}"
+        loaded = st.session_state.get(audio_key, False)
+        if not loaded and st.button("▶ Load audio", key=f"load_{path}"):
+            st.session_state[audio_key] = True
+            loaded = True
+        if loaded:
+            st.audio(str(audio_file))
 
-        if st.checkbox("Show technical alignment", key=f"graph_{path}"):
-            png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
+    st.markdown(
+        f"**Reference:** {row['reference']}  \n"
+        f"**Hypothesis DIT:** {row['dit_hypothesis']}  \n"
+        f"**Hypothesis DAT:** {row['dat_hypothesis']}"
+    )
 
-            if png_dit is not None:
-                st.markdown("**REF → DIT: reduced bipartite matching**")
-                st.image(png_dit)
-            png_dat = _reduced_graph_png(row["reference"], row["dat_hypothesis"])
+    dat_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-aware"])
+    dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-ignorant"])
+    dat_dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dat-dit"])
 
-            if png_dat is not None:
-                st.markdown("**REF → DAT: reduced bipartite matching**")
-                st.image(png_dat)
-            png_dat_dit = _reduced_graph_png(row["dat_hypothesis"], row["dit_hypothesis"])
+    st.markdown(_render_alignment_html(dit_cols, "Hypothesis DIT", searched_word=word),
+                unsafe_allow_html=True)
+    st.markdown(_render_alignment_html(dat_cols, "Hypothesis DAT", searched_word=word),
+                unsafe_allow_html=True)
+    st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
+                                       searched_word=None, ref_label="Hypothesis DAT"),
+                unsafe_allow_html=True)
 
-            if png_dat_dit is not None:
-                st.markdown("**DAT → DIT: reduced bipartite matching**")
-                st.image(png_dat_dit)
+    if st.checkbox("Show technical alignment", key=f"graph_{path}"):
+        png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
+
+        if png_dit is not None:
+            st.markdown("**REF → DIT: reduced bipartite matching**")
+            st.image(png_dit)
+        png_dat = _reduced_graph_png(row["reference"], row["dat_hypothesis"])
+
+        if png_dat is not None:
+            st.markdown("**REF → DAT: reduced bipartite matching**")
+            st.image(png_dat)
+        png_dat_dit = _reduced_graph_png(row["dat_hypothesis"], row["dit_hypothesis"])
+
+        if png_dat_dit is not None:
+            st.markdown("**DAT → DIT: reduced bipartite matching**")
+            st.image(png_dat_dit)
