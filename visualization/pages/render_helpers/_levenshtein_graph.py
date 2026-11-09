@@ -30,6 +30,7 @@ _CONTROL_STYLE = """
     background: var(--control-bg); color: var(--control-text); border: 1px solid var(--control-border);
     border-radius: 4px; padding: 3px 9px; font: inherit;
   }
+  #ring-graph { font-size: 14px; }
   #ring-graph .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 8px; }
   #ring-graph button { cursor: pointer; }
   #ring-graph button:disabled { opacity: 0.45; cursor: default; }
@@ -108,9 +109,9 @@ def render(graph: dict, rank_label: str, dark: bool = False) -> None:
     <button id="export-png" type="button">Export PNG</button>
   </div>
   <div id="variant-summary" style="color:{colors['muted']};"></div>
-  <div id="graph-message" style="color:{colors['muted']};"></div>
   <svg id="graph-svg" width="100%" height="620" viewBox="0 0 900 620"
        role="img" aria-label="Levenshtein ring graph"></svg>
+  <div id="graph-message" style="color:{colors['muted']};"></div>
 </div>
 <script>{_d3_source()}</script>
 <script>

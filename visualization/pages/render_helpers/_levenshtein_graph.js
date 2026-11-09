@@ -1,3 +1,30 @@
+// The iframe doesn't inherit the app's web font, but it shares the app's origin and can reuse its font rules.
+function adoptAppFont() {
+  const appFont = parent.getComputedStyle(parent.document.body).fontFamily;
+  const primaryFamily = appFont.split(",")[0].replace(/"/g, "").trim();
+  const fontRules = [];
+  for (const sheet of parent.document.styleSheets) {
+    try {
+      for (const rule of sheet.cssRules) {
+        if (rule instanceof parent.CSSFontFaceRule && rule.style.getPropertyValue("font-family").includes(primaryFamily)) {
+          // The rules' URLs are relative to their style sheet, not to this document.
+          fontRules.push(rule.cssText.replace(/url\("([^"]+)"\)/g, (match, url) => 'url("' + new URL(url, sheet.href || parent.location.href) + '")'));
+        }
+      }
+    } catch {
+      // Other origins' style sheets can't be read.
+    }
+  }
+  d3.select("head").append("style").text(fontRules.join("\n"));
+  d3.select("#ring-graph").style("font-family", appFont);
+}
+
+try {
+  adoptAppFont();
+} catch {
+  // Falls back to the browser's sans-serif.
+}
+
 const svg = d3.select("#graph-svg");
 const width = 900, height = 620, center = {x: width / 2, y: height / 2};
 const root = svg.append("g");
