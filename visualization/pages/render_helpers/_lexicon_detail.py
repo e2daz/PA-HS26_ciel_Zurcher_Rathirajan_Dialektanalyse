@@ -338,10 +338,13 @@ def render_regional_distribution(ctx: WordContext) -> None:
 
     st.altair_chart((cells + labels).properties(height=min(486, 26 * len(row_order) + 40)),
                     width="stretch")
-    st.caption("Darker = more frequent; empty cells are 0. The first row is the exact match; its "
-               "colour is capped at the most frequent variant, so read its values from the labels. "
-               "Absolute counts can mislead because regions have different sample sizes; switch to "
-               "'Share within region' to see what each region produces.")
+    chart_help(
+        "In which regions Whisper wrote the word correctly (first row) and in which it wrote one of the most "
+        "frequent variants (rows below). Darker = more often; the first row's colour is capped, so read its "
+        "numbers from the labels.",
+        "Regions have different amounts of data, so switch 'Values' to 'Share within region' to compare them. "
+        "Change 'Number of variants' for more or fewer rows, and hover a cell for its numbers.",
+    )
 
 
 def render_example_sentences(ctx: WordContext) -> None:
