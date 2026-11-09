@@ -291,7 +291,8 @@ function render() {
     d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
     return;
   }
-  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges or hide it (click empty space to clear); drag a node along its ring to group variants.");
+  // The how-to text is rendered by Streamlit under the graph, like the help of every other chart.
+  message.text("");
   variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabel + ".");
   nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
   // Variants arrive ranked, so the first n hypothesis nodes are the top n.

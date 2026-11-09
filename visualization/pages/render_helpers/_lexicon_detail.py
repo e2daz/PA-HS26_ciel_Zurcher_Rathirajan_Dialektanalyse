@@ -218,11 +218,7 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    col_rank, col_caption = st.columns(2, vertical_alignment="bottom")
-    col_caption.caption(
-        "The reference word is centered; each ring shows the raw Levenshtein distance "
-        "to the reference. Node size represents alignment count."
-    )
+    col_rank, _ = st.columns(2)
     with col_rank:
         rank_by = st.selectbox(
             "Select variants by",
@@ -236,6 +232,13 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     graph = build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
                                          tfidf_by_hypothesis=tfidf_by_hypothesis)
     _levenshtein_graph.render(graph, _GRAPH_RANK_LABELS[rank_by], dark=st.context.theme.type == "dark")
+    chart_help(
+        "Whisper's variants of the word by spelling distance. The word is in the middle, each ring is one more "
+        "letter change away (Levenshtein distance), and bigger nodes occur more often. Lines join variants that "
+        "are spelled alike; solid lines are closer than dashed ones.",
+        "Pick the number of variants and the line distance above the graph. Hover for numbers, click a node to "
+        "highlight its lines or hide it, drag it along its ring, and use Export PNG to save the view.",
+    )
 
 
 def render_regional_distribution(ctx: WordContext) -> None:
