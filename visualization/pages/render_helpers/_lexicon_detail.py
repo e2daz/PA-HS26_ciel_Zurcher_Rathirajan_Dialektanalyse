@@ -17,6 +17,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "domain"))
 sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
+from _help import chart_help  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -169,7 +170,6 @@ def render_overview(ctx: WordContext) -> None:
     col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
                    help="Different words the FHNW model produced for it, excluding the word itself.")
 
-    st.caption("What each model transcribed where the reference has this word, most frequent first.")
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
         st.markdown("**Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)**")
@@ -186,6 +186,11 @@ def render_overview(ctx: WordContext) -> None:
             width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
             column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
         )
+    chart_help(
+        "What each model wrote wherever the reference has this word, most frequent first. Whisper (DIT) ignores "
+        "dialect, the FHNW model (DAT) knows Swiss German, so variants that only DIT has point to dialect.",
+        "Click a column header to sort. Hover a number or column header to see what it means.",
+    )
 
 
 def render_levenshtein_graph(ctx: WordContext) -> None:
