@@ -14,8 +14,11 @@ levenshtein
 transformers
 seaborn
 rich
-streamlit
-streamlit-echarts
+# Minimum versions: the app uses persist_state, bind="query-params", st.tabs(on_change=...), st.iframe and
+# st_echarts(key/events/on_change). Unpinned, `uv pip install -r` keeps an older installed version, so the
+# server would not upgrade. If this causes problems, remove the version bounds again (git revert this commit).
+streamlit>=1.66
+streamlit-echarts>=0.7
 text2num>=2.5,<3
 scikit-learn
 jiwer
