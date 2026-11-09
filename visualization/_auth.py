@@ -14,6 +14,8 @@ def render_audio_gate() -> None:
     """Render the one-time audio password prompt where audio playback appears. Call once per render."""
     if st.session_state.get("audio_authed"):
         return
+    st.caption("Audio is password-protected because the corpora are licensed; automated downloading or crawling "
+               "is not permitted.")
     try:
         expected = st.secrets["password"]
     except (KeyError, StreamlitSecretNotFoundError):

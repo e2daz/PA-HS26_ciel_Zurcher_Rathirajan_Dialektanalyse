@@ -3,6 +3,7 @@ import html
 import io
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import altair as alt
@@ -55,10 +56,46 @@ _GRAPH_RANK_LABELS = {
     "similarity": "mean similarity",
 }
 
+_VARIANT_TABLE_HEIGHT = 350
+
+# Streamlit groups both step buttons right of the field; this matches the ring graph's "label - n +" control.
+_REGION_VARIANTS_CSS = """
+<style>
+  .st-key-region_dist_top_n [data-testid="stNumberInput"] { display: flex; align-items: center; gap: 8px; }
+  .st-key-region_dist_top_n label { margin: 0; width: auto; }
+  .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] {
+    width: auto; height: auto; gap: 4px; align-items: center; background: transparent; border: none;
+  }
+  .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] > div { display: contents; }
+  .st-key-region_dist_top_n input, .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] {
+    height: 28px; border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 4px;
+  }
+  .st-key-region_dist_top_n input { flex: none; width: 3.2em; padding: 3px; text-align: center; }
+  .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] { width: 30px; }
+  .st-key-region_dist_top_n [data-testid="stNumberInputStepDown"] { order: -1; }
+</style>
+"""
+
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
     "white-space: nowrap; border-bottom: 1px solid #eee;"
 )
+
+
+@dataclass(frozen=True)
+class WordContext:
+    """Everything an analysis tab needs to render one reference word."""
+    word: str
+    word_rows: pd.DataFrame  # alignments of the word itself, REF -> DIT and REF -> DAT
+    sentence_rows: pd.DataFrame  # every alignment of the sentences containing the word
+    regions: list[str]
+    include_preterite: bool
+    dataset: str
+
+
+def _clamp_region_variants() -> None:
+    """Snap the Regions variant count into range, like the ring graph's controls."""
+    st.session_state["region_dist_top_n"] = min(30, max(5, st.session_state["region_dist_top_n"]))
 
 
 @st.cache_data(max_entries=64, show_spinner=True)
@@ -87,99 +124,55 @@ def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
     return buf.getvalue()
 
 
-def render_header(word: str, word_rows: pd.DataFrame, selected_regions: list[str]) -> None:
-    """Back button, word title, and total alignment-row / sentence count caption."""
-    st.button("<- Back to word cloud", on_click=_back_to_cloud, key="back_btn")
-    st.markdown(f"### `{word}`")
+def render_overview(ctx: WordContext) -> None:
+    """General figures for the word and its most frequent DIT and DAT variants."""
+    dit_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-ignorant"]
+    dat_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-aware"]
 
-    n_total = len(word_rows)
-    n_sentences = word_rows["path"].nunique()
+    def variant_count(rows: pd.DataFrame) -> int:
+        hypotheses = rows["hypothesis_word"].dropna()
+        return hypotheses[hypotheses != ctx.word].nunique()
 
-    st.caption(f"{n_total:,} alignment rows across {n_sentences:,} sentences "
-               f"(in {len(selected_regions)} selected region(s))")
+    col_occurrences, col_sentences, col_dit, col_dat = st.columns(4)
+    col_occurrences.metric("Occurrences", f"{len(dit_rows):,}",
+                           help=f"How often the word occurs in the {len(ctx.regions)} selected region(s).")
+    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}")
+    col_dit.metric("DIT variants", f"{variant_count(dit_rows):,}",
+                   help="Different words Whisper produced for it, excluding the word itself.")
+    col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
+                   help="Different words the FHNW model produced for it, excluding the word itself.")
 
-
-def render_hypothesis_tables(word: str, word_rows: pd.DataFrame, selected_regions: list[str],
-                             include_preterite: bool, dataset: str) -> None:
-    """Side-by-side DIT/DAT hypothesis-variant tables for the searched reference word."""
-    col_dit, col_dat = st.columns(2)
-
-    with col_dit:
+    st.caption("What each model transcribed where the reference has this word, most frequent first.")
+    col_dit_table, col_dat_table = st.columns(2)
+    with col_dit_table:
         st.markdown("**Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)**")
-        st.caption("Hypothesis variants the DIT model produced as the alignment of the searched reference word.")
-
-        dit_table = _hypothesis_table(
-            word_rows[word_rows["model"] == "dialect-ignorant"],
-            word, "dialect-ignorant", selected_regions, include_preterite, dataset,
+        st.dataframe(
+            _hypothesis_table(dit_rows, ctx.word, "dialect-ignorant", ctx.regions, ctx.include_preterite, ctx.dataset)
+            .sort_values("count", ascending=False),
+            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
         )
-
-        st.dataframe(dit_table, width="stretch", hide_index=True,
-                     column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
-        st.caption("Default ordering: descending by **TF-IDF**.")
-
-    with col_dat:
+    with col_dat_table:
         st.markdown("**Dialect-Aware-Transcript (DAT, FHNW STT4SG)**")
-        st.caption("Hypothesis variants the DAT model produced as the alignment of the searched reference word.")
-
-        dat_table = _hypothesis_table(
-            word_rows[word_rows["model"] == "dialect-aware"],
-            word, "dialect-aware", selected_regions, include_preterite, dataset,
+        st.dataframe(
+            _hypothesis_table(dat_rows, ctx.word, "dialect-aware", ctx.regions, ctx.include_preterite, ctx.dataset),
+            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
         )
 
-        st.dataframe(dat_table, width="stretch", hide_index=True,
-                     column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG)
-        st.caption("Default ordering: descending by **count**.")
 
-
-def render_word_chart(word_rows: pd.DataFrame) -> None:
-    """Stacked bar of regional DIT-variant breakdown for the searched reference word."""
-    region_order = [r for r in REGIONS if r in word_rows["dialect_region"].unique()]
-    if not region_order:
-        return
-
-    dit = word_rows[word_rows["model"] == "dialect-ignorant"].copy()
-    dit["variant"] = dit["hypothesis_word"].fillna("(deletion)")
-
-    top_n = 6
-    top_variants = dit["variant"].value_counts().head(top_n).index.tolist()
-    dit["variant_grouped"] = dit["variant"].where(dit["variant"].isin(top_variants), "(other)")
-
-    counts = (
-        dit.groupby(["dialect_region", "variant_grouped"], observed=True)
-        .size()
-        .reset_index(name="count")
-    )
-
-    variant_chart = (
-        alt.Chart(counts)
-        .mark_bar()
-        .encode(
-            x=alt.X("dialect_region:N", sort=region_order, title=None,
-                    axis=alt.Axis(labelAngle=0, labelOverlap=False)),
-            y=alt.Y("count:Q", title="DIT alignments"),
-            color=alt.Color("variant_grouped:N",
-                            scale=alt.Scale(scheme="category10"),
-                            legend=alt.Legend(title="DIT variant")),
-            tooltip=[
-                alt.Tooltip("dialect_region:N", title="Region"),
-                alt.Tooltip("variant_grouped:N", title="Variant"),
-                alt.Tooltip("count:Q", title="Count"),
-            ],
-        )
-        .properties(height=340, title="DIT variants per region")
-    )
-    st.altair_chart(variant_chart, width="stretch")
-
-
-def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_regions: list[str],
-                             include_preterite: bool, dataset: str) -> None:
+def render_levenshtein_graph(ctx: WordContext) -> None:
     """Render the top DIT variants on concentric rings by edit distance."""
+    word, word_rows = ctx.word, ctx.word_rows
     dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
-    lookup = _dit_tfidf_lookup(word, selected_regions, include_preterite, dataset)
+    lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    st.markdown("### Levenshtein ring graph")
-    col_rank, _ = st.columns(2)
+    col_rank, col_caption = st.columns(2, vertical_alignment="bottom")
+    col_caption.caption(
+        "The reference word is centered; each ring shows the raw Levenshtein distance "
+        "to the reference. Node size represents alignment count."
+    )
     with col_rank:
         rank_by = st.selectbox(
             "Select variants by",
@@ -192,20 +185,15 @@ def render_levenshtein_graph(word: str, word_rows: pd.DataFrame, selected_region
 
     graph = build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
                                          tfidf_by_hypothesis=tfidf_by_hypothesis)
-    st.caption(
-        "The reference word is centered; each ring shows the raw Levenshtein distance "
-        "to the reference. Node size represents alignment count."
-    )
     _levenshtein_graph.render(graph, _GRAPH_RANK_LABELS[rank_by], dark=st.context.theme.type == "dark")
 
 
-def render_regional_distribution(word: str, word_rows: pd.DataFrame,
-                                 selected_regions: list[str]) -> None:
+def render_regional_distribution(ctx: WordContext) -> None:
     """Heatmap of where the searched word and its DIT variants occur across the dialect regions.
     The exact match (hypothesis == reference) is the first row, so each variant can be compared
     against how often DIT simply transcribed the reference word."""
+    word, word_rows, selected_regions = ctx.word, ctx.word_rows, ctx.regions
     dit_rows = word_rows[(word_rows["model"] == "dialect-ignorant") & word_rows["hypothesis_word"].notna()]
-    st.markdown("### Regional distribution")
     if dit_rows.empty:
         st.caption("No DIT transcriptions to show for the selected regions.")
         return
@@ -229,10 +217,12 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
                  "compare what a region produces instead of raw counts.",
         )
     with col_top_n:
-        top_n = st.slider("Number of variants", min_value=5, max_value=30, value=12, step=1,
-                          key="region_dist_top_n",
-                          help="The most frequent DIT variants of the searched word, shown below "
-                               "the exact match.")
+        st.html(_REGION_VARIANTS_CSS)
+        # No min/max here: Streamlit would keep an out-of-range entry in the field and silently ignore it.
+        top_n = st.number_input("Number of variants", value=12, step=1, key="region_dist_top_n",
+                                on_change=_clamp_region_variants,
+                                help="The most frequent DIT variants of the searched word, shown below "
+                                     "the exact match.")
 
     # Exact match first, then the most frequent variants so the heatmap stays readable.
     variant_counts = counts[counts["hypothesis_word"] != word]
@@ -301,13 +291,13 @@ def render_regional_distribution(word: str, word_rows: pd.DataFrame,
                "'Share within region' to see what each region produces.")
 
 
-def render_example_sentences(df_view: pd.DataFrame, word_rows: pd.DataFrame, word: str,
-                             selected_regions: list[str], include_preterite: bool,
-                             dataset: str) -> None:
+def render_example_sentences(ctx: WordContext) -> None:
     """Sentences grouped by DIT hypothesis (TF-IDF desc).
     Two-level pagination: outer pager selects which variants to show; inner shows sentences.
     Matches and deletions sort to the bottom (TF-IDF = 0).
     """
+    df_view, word_rows, word = ctx.sentence_rows, ctx.word_rows, ctx.word
+    selected_regions, include_preterite, dataset = ctx.regions, ctx.include_preterite, ctx.dataset
     dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
 
     # Dedupe on (path, _variant) so sentences with multiple occurrences of the searched word appear under every variant.
@@ -496,11 +486,6 @@ def _render_alignment_html(columns: list[dict], hyp_label: str,
         f'<tr>{"".join(hyp_cells)}</tr>'
         f'</table></div>'
     )
-
-
-def _back_to_cloud():
-    """Clear the search selection so the next render returns to the word-cloud overview."""
-    st.session_state["selected_word"] = ""
 
 
 def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:

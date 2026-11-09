@@ -1,4 +1,6 @@
 """Word-cloud overview for the Dialect Word Lexicon page."""
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -8,6 +10,7 @@ from _data import REGION_COLORS, CloudMode, pair_region_counts, tfidf_matrix_pai
 
 _TABLE_COLUMNS = ["pair", "TF-IDF", "peak region", "count"]
 _TOP_N = 200
+WORD_CLOUD_KEY = "word_cloud"
 
 _MODE_PAIR_LABEL: dict[CloudMode, str] = {
     "ref_dit": "(ref, DIT-hyp)",
@@ -16,13 +19,10 @@ _MODE_PAIR_LABEL: dict[CloudMode, str] = {
 
 
 def render_caption(mode: CloudMode = "ref_dit") -> None:
-    """Section header and explanatory text above the word cloud."""
-    pair_label = _MODE_PAIR_LABEL[mode]
-
-    st.markdown("### Word Cloud for Dialect Specific Candidates")
-    st.markdown(
-        f"{pair_label} pairs ranked by their **TF-IDF** score across the selected regions (treated as documents). "
-        "Surfaces pairs most distinct to their specific region. Hover a pair to see its score, peak region, and count."
+    """Explanatory text for the word cloud."""
+    st.caption(
+        f"{_MODE_PAIR_LABEL[mode]} pairs ranked by **TF-IDF** across the selected regions, which surfaces pairs "
+        "distinct to one region. Hover a pair for details; click it to analyse its word."
     )
 
 
@@ -67,8 +67,11 @@ def compute_top_table(selected_regions: list[str], include_preterite: bool,
     })
 
 
-def render_word_cloud(table: pd.DataFrame) -> None:
-    """Word cloud sized by TF-IDF, colored by peak region; hover shows score and count."""
+def render_word_cloud(table: pd.DataFrame, on_click: Callable[[], None]) -> None:
+    """Word cloud sized by TF-IDF, colored by peak region; hover shows score and count.
+
+    `on_click` runs when a pair is clicked; the pair is in the `WORD_CLOUD_KEY` session state entry.
+    """
     cloud_data = [
         {
             "name": str(row["pair"]),
@@ -107,7 +110,14 @@ def render_word_cloud(table: pd.DataFrame) -> None:
             "data": cloud_data,
         }],
     }
-    st_echarts(options=option, height="520px")
+    # The timestamp makes every click a new value, so the same pair can be opened again after going back.
+    st_echarts(
+        options=option,
+        height="400px",
+        key=WORD_CLOUD_KEY,
+        events={"click": "function(params) { return {name: params.name, at: Date.now()}; }"},
+        on_change=on_click,
+    )
     _render_region_legend(table)
 
 
@@ -162,6 +172,6 @@ def _render_region_legend(table: pd.DataFrame) -> None:
         for r in peaks_in_view
     )
     st.markdown(
-        f'<div style="text-align:center;font-size:0.9em;color:#333;">{swatches}</div>',
+        f'<div style="text-align:center;font-size:0.9em;">{swatches}</div>',
         unsafe_allow_html=True,
     )

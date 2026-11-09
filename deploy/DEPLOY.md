@@ -5,7 +5,7 @@ How the Streamlit visualization is hosted on the ZHAW-internal server and how to
 
 ## What it is
 
-A Streamlit web app (`visualization/Home.py` plus two pages) for exploring dialect-specific words.
+A Streamlit web app (`visualization/Home.py` as the entry script, plus three pages) for exploring dialect-specific words.
 It compares the two ASR transcripts (DAT and DIT) against the Standard German reference, for the
 STT4SG-350 and SDS-200 corpora. It reads precomputed word-alignment parquets and transcript TSVs.
 Nothing is computed from audio at runtime.
