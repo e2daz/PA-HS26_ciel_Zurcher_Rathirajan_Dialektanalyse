@@ -24,6 +24,9 @@ from _data import (  # noqa: E402
 from pages.render_helpers import _levenshtein_graph  # noqa: E402
 from bipartite_matching import build_full_bipartite_graph, solve_matching  # noqa: E402
 from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
+from occurrence_table import (  # noqa: E402
+    SHOW_ALL, SHOW_DIT_DIFFERS, SHOW_MODELS_DIFFER, build_occurrence_table, filter_occurrences, words_by_frequency,
+)
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
 from preprocessing import tokenize  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
@@ -75,6 +78,30 @@ _REGION_VARIANTS_CSS = """
   .st-key-region_dist_top_n [data-testid="stNumberInputStepDown"] { order: -1; }
 </style>
 """
+
+_OCCURRENCE_VIEWS = {"table": "Table of all occurrences", "by_variant": "Sentences by DIT variant"}
+
+_SHOW_OPTIONS = {
+    SHOW_ALL: "All",
+    SHOW_DIT_DIFFERS: "DIT ≠ reference",
+    SHOW_MODELS_DIFFER: "DIT ≠ DAT",
+}
+
+# Also the table's column order; "dataset" is appended when both corpora are shown.
+_OCCURRENCE_COLUMN_CONFIG = {
+    "dialect_region": st.column_config.TextColumn("region"),
+    "dit_word": st.column_config.TextColumn("DIT", help="What Whisper transcribed for this occurrence."),
+    "dat_word": st.column_config.TextColumn("DAT", help="What the FHNW model transcribed for this occurrence."),
+    "dit_similarity": st.column_config.NumberColumn("DIT sim", format="%.2f",
+                                                    help="Alignment similarity of the DIT word to the reference."),
+    "dat_similarity": st.column_config.NumberColumn("DAT sim", format="%.2f",
+                                                    help="Alignment similarity of the DAT word to the reference."),
+    "reference": st.column_config.TextColumn("reference sentence", width="large"),
+    "dit_hypothesis": st.column_config.TextColumn("DIT transcript", width="large"),
+    "dat_hypothesis": st.column_config.TextColumn("DAT transcript", width="large"),
+    "position": st.column_config.NumberColumn("pos", help="Word position in the reference sentence (1 = first)."),
+    "dataset": st.column_config.TextColumn("dataset"),
+}
 
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
@@ -292,6 +319,50 @@ def render_regional_distribution(ctx: WordContext) -> None:
 
 
 def render_example_sentences(ctx: WordContext) -> None:
+    """Occurrences tab: a filterable table of every occurrence, or the sentences grouped by DIT variant."""
+    view = st.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get, horizontal=True,
+                    key="occurrence_view", label_visibility="collapsed")
+    if view == "table":
+        _render_occurrence_table(ctx)
+    else:
+        _render_sentences_by_variant(ctx)
+
+
+def _render_occurrence_table(ctx: WordContext) -> None:
+    """Every occurrence of the word with its DIT and DAT transcription."""
+    table = build_occurrence_table(ctx.word_rows, ctx.word)
+    # Per word, so filter values never refer to another word's transcriptions.
+    key = f"occurrences_{ctx.word}"
+
+    col_search, col_show = st.columns([3, 2], vertical_alignment="bottom")
+    search = col_search.text_input(
+        "Search", key=f"{key}_search", placeholder="Word or sentence text…",
+        help="Case-insensitive; matches the reference sentence, both transcripts and both transcribed words.",
+    )
+    show = col_show.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
+                          key=f"{key}_show")
+    col_dit, col_dat, col_region = st.columns(3)
+    dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),
+                                    key=f"{key}_dit", placeholder="All", help="Most frequent first.")
+    dat_words = col_dat.multiselect("DAT transcription", words_by_frequency(table, "dat_word"),
+                                    key=f"{key}_dat", placeholder="All", help="Most frequent first.")
+    regions_present = set(table["dialect_region"])
+    regions = col_region.multiselect("Region", [r for r in REGIONS if r in regions_present],
+                                     key=f"{key}_regions", placeholder="All",
+                                     help="Narrows this table only; the sidebar filter applies to every tab.")
+
+    filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
+    st.caption(f"{len(filtered):,} of {len(table):,} occurrences. Click a column header to sort.")
+
+    columns = list(_OCCURRENCE_COLUMN_CONFIG)
+    if table["dataset"].nunique() > 1:
+        columns.append("dataset")
+    display = filtered.assign(position=filtered["reference_index"] + 1)[columns]
+    st.dataframe(display, width="stretch", height=380, hide_index=True,
+                 column_config=_OCCURRENCE_COLUMN_CONFIG)
+
+
+def _render_sentences_by_variant(ctx: WordContext) -> None:
     """Sentences grouped by DIT hypothesis (TF-IDF desc).
     Two-level pagination: outer pager selects which variants to show; inner shows sentences.
     Matches and deletions sort to the bottom (TF-IDF = 0).
