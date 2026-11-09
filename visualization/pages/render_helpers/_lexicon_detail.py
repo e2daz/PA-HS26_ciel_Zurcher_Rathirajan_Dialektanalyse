@@ -329,7 +329,7 @@ def render_example_sentences(ctx: WordContext) -> None:
 
 
 def _render_occurrence_table(ctx: WordContext) -> None:
-    """Every occurrence of the word with its DIT and DAT transcription."""
+    """Every occurrence of the word with its DIT and DAT transcription; selecting a row shows its details."""
     table = build_occurrence_table(ctx.word_rows, ctx.word)
     # Per word, so filter values never refer to another word's transcriptions.
     key = f"occurrences_{ctx.word}"
@@ -352,14 +352,26 @@ def _render_occurrence_table(ctx: WordContext) -> None:
                                      help="Narrows this table only; the sidebar filter applies to every tab.")
 
     filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
-    st.caption(f"{len(filtered):,} of {len(table):,} occurrences. Click a column header to sort.")
+    st.caption(f"{len(filtered):,} of {len(table):,} occurrences. Click a column header to sort; select a row "
+               "to see its audio, full transcripts and word alignments.")
 
     columns = list(_OCCURRENCE_COLUMN_CONFIG)
     if table["dataset"].nunique() > 1:
         columns.append("dataset")
     display = filtered.assign(position=filtered["reference_index"] + 1)[columns]
-    st.dataframe(display, width="stretch", height=380, hide_index=True,
-                 column_config=_OCCURRENCE_COLUMN_CONFIG)
+    # A new key per filter state clears the selection, which would otherwise point at another row.
+    filter_state = hash((search, show, tuple(dit_words), tuple(dat_words), tuple(regions)))
+    event = st.dataframe(display, width="stretch", height=380, hide_index=True,
+                         column_config=_OCCURRENCE_COLUMN_CONFIG, on_select="rerun",
+                         selection_mode="single-row", key=f"{key}_table_{filter_state}")
+
+    if not event.selection.rows:
+        return
+    row = filtered.iloc[event.selection.rows[0]]
+    st.markdown(f"#### Selected occurrence: {_sentence_header(row)}")
+    render_audio_gate()
+    sentence_rows = ctx.sentence_rows[ctx.sentence_rows["path"] == row["path"]]
+    _render_sentence_details(row, sentence_rows, ctx.word, ctx.dataset)
 
 
 def _render_sentences_by_variant(ctx: WordContext) -> None:
