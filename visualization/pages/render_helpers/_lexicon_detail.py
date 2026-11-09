@@ -381,8 +381,7 @@ def _render_occurrence_table(ctx: WordContext) -> None:
                                      help="Narrows this table only; the sidebar filter applies to every tab.")
 
     filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
-    st.caption(f"{len(filtered):,} of {len(table):,} occurrences. Click a column header to sort; select a row "
-               "to see its audio, full transcripts and word alignments.")
+    st.caption(f"{len(filtered):,} of {len(table):,} occurrences")
 
     columns = list(_OCCURRENCE_COLUMN_CONFIG)
     if table["dataset"].nunique() > 1:
@@ -393,6 +392,12 @@ def _render_occurrence_table(ctx: WordContext) -> None:
     event = st.dataframe(display, width="stretch", height=380, hide_index=True,
                          column_config=_OCCURRENCE_COLUMN_CONFIG, on_select="rerun",
                          selection_mode="single-row", key=f"{key}_table_{filter_state}")
+    chart_help(
+        "Every place the word appears in the reference, with what Whisper (DIT) and the FHNW model (DAT) wrote "
+        "there. 'sim' is how close that word is to the reference (1 = identical).",
+        "Search or filter above the table and click a column header to sort. Select a row to see its audio "
+        "and word alignment below.",
+    )
 
     if not event.selection.rows:
         return
@@ -438,6 +443,9 @@ def _render_sentences_by_variant(ctx: WordContext) -> None:
     n_unique_sentences = unique_paths["path"].nunique()
     st.markdown(f"**Sentences with word-level alignment**: {n_unique_sentences:,} sentences "
                 f"across {len(variant_order)} DIT variants")
+    # The list below can be long, so its help goes on top instead of underneath.
+    chart_help("The sentences grouped by what Whisper (DIT) wrote for the word, most region-typical variant first.",
+               "Open a sentence for its audio and word alignment. Use the page selectors when there are many.")
 
     # One-time audio password prompt (the only gated feature); rendered once here, where clips appear.
     render_audio_gate()
@@ -651,6 +659,11 @@ def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: 
     st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
                                        searched_word=None, ref_label="Hypothesis DAT"),
                 unsafe_allow_html=True)
+    chart_help(
+        "Word-by-word alignment of the sentence: the reference against each transcript, then DAT against DIT. "
+        "The searched word is highlighted; ε means there is no word on that side.",
+        "'Show technical alignment' draws the matching as a graph.",
+    )
 
     if st.checkbox("Show technical alignment", key=f"graph_{path}"):
         png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
