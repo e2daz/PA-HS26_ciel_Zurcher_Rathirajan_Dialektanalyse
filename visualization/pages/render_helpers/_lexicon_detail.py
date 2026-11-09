@@ -26,23 +26,28 @@ from bipartite_matching import build_full_bipartite_graph, solve_matching  # noq
 from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
 from preprocessing import tokenize  # noqa: E402
+from word_overview import DELETION, DELETION_LABEL, ModelSummary, summarize_model, variant_frequencies  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
 
-_HYPOTHESIS_TABLE_COLUMN_CONFIG = {
-    "hypothesis_word": st.column_config.TextColumn(
-        help="The hypothesis variant the model produced as the alignment of the searched reference word.",
+_VARIANT_FREQUENCY_COLUMN_CONFIG = {
+    "transcription": st.column_config.TextColumn(
+        "transcription", help="What the model produced where the reference has the word. "
+                              f"{DELETION_LABEL} = the model produced nothing for it.",
     ),
-    "count": st.column_config.NumberColumn(
-        help="Number of alignments where the searched reference word was matched with this hypothesis word.",
+    "kind": st.column_config.TextColumn(
+        help="exact match = the reference word itself; variant = a different word; deletion = no word.",
     ),
-    "mean sim": st.column_config.NumberColumn(
-        help="Mean similarity per hypothesis word: average similarity across the **count** alignments where the searched "
-             "reference word was matched with this specific hypothesis variant. Higher = the variant is lexically and "
-             "positionally close to the reference.",
+    "count": st.column_config.NumberColumn(help="Number of occurrences transcribed this way."),
+    "share": st.column_config.ProgressColumn(
+        "share", help="Percent of all occurrences of the word.", format="%.1f%%", min_value=0, max_value=100,
+    ),
+    "mean_similarity": st.column_config.NumberColumn(
+        "mean sim", format="%.3f",
+        help="Average alignment similarity to the reference word. Higher = lexically and positionally closer.",
     ),
     "TF-IDF": st.column_config.NumberColumn(
-        help="Highest TF-IDF of the (ref, DIT-hyp) pair across the selected "
-             "regions. Matches the word-cloud metric.",
+        help="Highest TF-IDF of the (ref, DIT-hyp) pair across the selected regions. Matches the word-cloud "
+             "metric; 0 for the exact match and deletions.",
         format="%.5f",
     ),
 }
@@ -125,40 +130,54 @@ def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
 
 
 def render_overview(ctx: WordContext) -> None:
-    """General figures for the word and its most frequent DIT and DAT variants."""
+    """Compact statistics for the word: occurrences, sentences, and each model's transcriptions by frequency."""
     dit_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-ignorant"]
     dat_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-aware"]
-
-    def variant_count(rows: pd.DataFrame) -> int:
-        hypotheses = rows["hypothesis_word"].dropna()
-        return hypotheses[hypotheses != ctx.word].nunique()
+    dit, dat = summarize_model(dit_rows, ctx.word), summarize_model(dat_rows, ctx.word)
 
     col_occurrences, col_sentences, col_dit, col_dat = st.columns(4)
-    col_occurrences.metric("Occurrences", f"{len(dit_rows):,}",
-                           help=f"How often the word occurs in the {len(ctx.regions)} selected region(s).")
-    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}")
-    col_dit.metric("DIT variants", f"{variant_count(dit_rows):,}",
-                   help="Different words Whisper produced for it, excluding the word itself.")
-    col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
-                   help="Different words the FHNW model produced for it, excluding the word itself.")
+    col_occurrences.metric("Occurrences", f"{dit.occurrences:,}",
+                           help=f"How often the word occurs in the reference, in the {len(ctx.regions)} "
+                                "selected region(s). Each occurrence is aligned once in DIT and once in DAT.")
+    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}",
+                         help="Distinct sentences containing the word; a sentence can contain it more than once.")
+    col_dit.metric("DIT exact match", f"{dit.exact_match_share:.0%}",
+                   help="Share of occurrences Whisper transcribed as the reference word itself. "
+                        "Lower = more dialect influence.")
+    col_dat.metric("DAT exact match", f"{dat.exact_match_share:.0%}",
+                   help="Share of occurrences the FHNW model transcribed as the reference word itself.")
 
-    st.caption("What each model transcribed where the reference has this word, most frequent first.")
+    st.caption("What each model transcribed where the reference has this word, most frequent first. "
+               "Share = percent of all occurrences.")
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
-        st.markdown("**Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)**")
-        st.dataframe(
-            _hypothesis_table(dit_rows, ctx.word, "dialect-ignorant", ctx.regions, ctx.include_preterite, ctx.dataset)
-            .sort_values("count", ascending=False),
-            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
-            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
-        )
+        _render_variant_frequencies("Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)", dit_rows, dit, ctx,
+                                    with_tfidf=True)
     with col_dat_table:
-        st.markdown("**Dialect-Aware-Transcript (DAT, FHNW STT4SG)**")
-        st.dataframe(
-            _hypothesis_table(dat_rows, ctx.word, "dialect-aware", ctx.regions, ctx.include_preterite, ctx.dataset),
-            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
-            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
-        )
+        _render_variant_frequencies("Dialect-Aware-Transcript (DAT, FHNW STT4SG)", dat_rows, dat, ctx,
+                                    with_tfidf=False)
+
+
+def _render_variant_frequencies(title: str, rows: pd.DataFrame, summary: ModelSummary, ctx: WordContext,
+                                with_tfidf: bool) -> None:
+    """One model's transcriptions of the word as a frequency table; TF-IDF only exists for DIT pairs."""
+    st.markdown(f"**{title}**")
+    st.caption(" · ".join(_count_label(n, label) for n, label in [
+        (summary.variant_count, "variant"), (summary.exact_matches, "exact match"), (summary.deletions, "deletion"),
+    ]))
+    table = variant_frequencies(rows, ctx.word)
+    if with_tfidf:
+        lookup = _dit_tfidf_lookup(ctx.word, ctx.regions, ctx.include_preterite, ctx.dataset)
+        table["TF-IDF"] = [0.0 if kind == DELETION else lookup(t) for t, kind in zip(table["transcription"],
+                                                                                    table["kind"])]
+    st.dataframe(table, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+                 column_config=_VARIANT_FREQUENCY_COLUMN_CONFIG)
+
+
+def _count_label(n: int, noun: str) -> str:
+    """'1 variant', '3 variants', '2 exact matches'."""
+    plural = noun + ("es" if noun.endswith("ch") else "s")
+    return f"{n:,} {noun if n == 1 else plural}"
 
 
 def render_levenshtein_graph(ctx: WordContext) -> None:
