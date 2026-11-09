@@ -7,6 +7,7 @@ import streamlit as st
 from streamlit_echarts import JsCode, st_echarts
 
 from _data import REGION_COLORS, CloudMode, pair_region_counts, tfidf_matrix_pairs
+from _help import chart_help
 
 _TABLE_COLUMNS = ["pair", "TF-IDF", "peak region", "count"]
 _TOP_N = 200
@@ -19,10 +20,14 @@ _MODE_PAIR_LABEL: dict[CloudMode, str] = {
 
 
 def render_caption(mode: CloudMode = "ref_dit") -> None:
-    """Explanatory text for the word cloud."""
-    st.caption(
-        f"{_MODE_PAIR_LABEL[mode]} pairs ranked by **TF-IDF** across the selected regions, which surfaces pairs "
-        "distinct to one region. Hover a pair for details; click it to analyse its word."
+    """Help text under the word cloud."""
+    pair = "reference word → what Whisper (DIT) wrote" if mode == "ref_dit" else \
+        "what the FHNW model (DAT) wrote → what Whisper (DIT) wrote"
+    chart_help(
+        f"Word pairs ({pair}) that are typical for one region. Bigger = more typical (TF-IDF), "
+        "colour = the region where the pair is most typical.",
+        "Hover a pair for its numbers and click it to analyse the word. Use 'Compare' to switch which "
+        "transcripts are paired.",
     )
 
 
@@ -145,12 +150,9 @@ def render_top_candidates_expander(table: pd.DataFrame, mode: CloudMode = "ref_d
         ),
     }
     with st.expander("Top Dialect Specific Candidates"):
-        st.caption(
-            f"{pair_label} pairs ranked by TF-IDF (max across selected regions). "
-            "Surfaces pairs most distinct to their specific region."
-        )
         st.dataframe(table, width="stretch", hide_index=True, column_config=column_config)
-        st.caption("Default ordering: descending by **TF-IDF**.")
+        chart_help("The pairs from the word cloud as a list, most region-typical first.",
+                   "Click a column header to sort; hover it to see what the column means.")
 
 
 def _decode_pair(p: str) -> str:
