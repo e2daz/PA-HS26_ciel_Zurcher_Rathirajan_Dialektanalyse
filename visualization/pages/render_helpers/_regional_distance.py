@@ -11,6 +11,7 @@ sys.path.insert(0, str(_VIS_DIR))
 from _data import (  # noqa: E402
     DAT_COLOR, DIT_COLOR, LAMBDA, filter_preterite, per_sentence_cost,
 )
+from _help import chart_help  # noqa: E402
 
 _MODEL_SCALE = alt.Scale(
     domain=["dialect-aware", "dialect-ignorant"],
@@ -114,16 +115,20 @@ def render_headline_plots(summary: pd.DataFrame, regions_sorted: list[str]) -> N
 
     # Render as separate charts (not vconcat) so each picks up the full container width.
     st.altair_chart(paired_chart, width="stretch")
+    chart_help("How far each model's transcripts are from the Standard German reference, averaged per region. "
+               "Lower = closer to the reference.",
+               "Hover a bar for the exact value.")
     st.markdown("**Total cost delta**")
     st.altair_chart((delta_chart + zero).properties(height=220), width="stretch")
+    chart_help("The difference between the two bars above (DIT minus DAT). The higher the bar, the more the "
+               "dialect throws off Whisper, i.e. the further the region's dialect is from Standard German.",
+               "Regions are sorted from largest to smallest difference; hover a bar for the exact value.")
 
 
 def render_summary_table(summary: pd.DataFrame, uses_balanced: bool) -> None:
     """Per-region summary table with rounded total cost columns."""
     st.markdown("### Per-region summary")
     subset_clause = "all train_balanced sentences" if uses_balanced else "all filtered sentences"
-    st.caption(f"Dialect distance per region: per-sentence total alignment cost averaged across {subset_clause} "
-               "in the region, plus the DIT-vs-DAT delta.")
     display_table = summary.copy()
 
     for col in ("DAT mean total cost", "DIT mean total cost", "total cost delta (DIT − DAT)"):
@@ -148,17 +153,13 @@ def render_summary_table(summary: pd.DataFrame, uses_balanced: bool) -> None:
     }
 
     st.dataframe(display_table, hide_index=True, width="stretch", column_config=column_config)
-    st.caption("Default ordering: descending by **total cost delta (DIT − DAT)**.")
+    chart_help(f"The numbers behind the two charts above, averaged over {subset_clause} per region.",
+               "Click a column header to sort; hover it to see what the column means.")
 
 
 def render_cost_distribution(per_sentence: pd.DataFrame, regions_sorted: list[str]) -> None:
     """Per-region/model box plot of per-sentence total alignment cost (5/25/50/75/95 percentiles)."""
     st.markdown("### Per-sentence total cost distribution")
-    st.caption(
-        "Each box: within-region distribution of per-sentence total alignment cost (per ref word). "
-        "Whiskers span 5th–95th percentile; box is q1–q3; tick is the median. "
-        "Wide IQR = mixed dialect compliance across speakers."
-    )
 
     box_stats = _box_stats(per_sentence)
     base = alt.Chart(box_stats).encode(
@@ -175,6 +176,10 @@ def render_cost_distribution(per_sentence: pd.DataFrame, regions_sorted: list[st
     median_tick = base.mark_tick(thickness=2.5, color="black", size=22).encode(y="median:Q")
 
     st.altair_chart((whisker + box + median_tick).properties(height=380), width="stretch")
+    chart_help("How much the cost varies between single sentences in a region. The box holds the middle half of "
+               "the sentences, the black tick is the median, the line spans 5 % to 95 %.",
+               "Compare the boxes: a tall box means speakers in that region range from close to Standard German "
+               "to strong dialect.")
 
 
 def _box_stats(df: pd.DataFrame) -> pd.DataFrame:

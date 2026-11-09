@@ -17,6 +17,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "domain"))
 sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
+from _help import chart_help  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -24,25 +25,33 @@ from _data import (  # noqa: E402
 from pages.render_helpers import _levenshtein_graph  # noqa: E402
 from bipartite_matching import build_full_bipartite_graph, solve_matching  # noqa: E402
 from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
+from occurrence_table import (  # noqa: E402
+    SHOW_ALL, SHOW_DIT_DIFFERS, SHOW_MODELS_DIFFER, build_occurrence_table, filter_occurrences, words_by_frequency,
+)
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
 from preprocessing import tokenize  # noqa: E402
+from word_overview import DELETION, DELETION_LABEL, ModelSummary, summarize_model, variant_frequencies  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
 
-_HYPOTHESIS_TABLE_COLUMN_CONFIG = {
-    "hypothesis_word": st.column_config.TextColumn(
-        help="The hypothesis variant the model produced as the alignment of the searched reference word.",
+_VARIANT_FREQUENCY_COLUMN_CONFIG = {
+    "transcription": st.column_config.TextColumn(
+        "transcription", help="What the model produced where the reference has the word. "
+                              f"{DELETION_LABEL} = the model produced nothing for it.",
     ),
-    "count": st.column_config.NumberColumn(
-        help="Number of alignments where the searched reference word was matched with this hypothesis word.",
+    "kind": st.column_config.TextColumn(
+        help="exact match = the reference word itself; variant = a different word; deletion = no word.",
     ),
-    "mean sim": st.column_config.NumberColumn(
-        help="Mean similarity per hypothesis word: average similarity across the **count** alignments where the searched "
-             "reference word was matched with this specific hypothesis variant. Higher = the variant is lexically and "
-             "positionally close to the reference.",
+    "count": st.column_config.NumberColumn(help="Number of occurrences transcribed this way."),
+    "share": st.column_config.ProgressColumn(
+        "share", help="Percent of all occurrences of the word.", format="%.1f%%", min_value=0, max_value=100,
+    ),
+    "mean_similarity": st.column_config.NumberColumn(
+        "mean sim", format="%.3f",
+        help="Average alignment similarity to the reference word. Higher = lexically and positionally closer.",
     ),
     "TF-IDF": st.column_config.NumberColumn(
-        help="Highest TF-IDF of the (ref, DIT-hyp) pair across the selected "
-             "regions. Matches the word-cloud metric.",
+        help="Highest TF-IDF of the (ref, DIT-hyp) pair across the selected regions. Matches the word-cloud "
+             "metric; 0 for the exact match and deletions.",
         format="%.5f",
     ),
 }
@@ -75,6 +84,30 @@ _REGION_VARIANTS_CSS = """
   .st-key-region_dist_top_n [data-testid="stNumberInputStepDown"] { order: -1; }
 </style>
 """
+
+_OCCURRENCE_VIEWS = {"table": "Table of all occurrences", "by_variant": "Sentences by DIT variant"}
+
+_SHOW_OPTIONS = {
+    SHOW_ALL: "All",
+    SHOW_DIT_DIFFERS: "DIT ≠ reference",
+    SHOW_MODELS_DIFFER: "DIT ≠ DAT",
+}
+
+# Also the table's column order; "dataset" is appended when both corpora are shown.
+_OCCURRENCE_COLUMN_CONFIG = {
+    "dialect_region": st.column_config.TextColumn("region"),
+    "dit_word": st.column_config.TextColumn("DIT", help="What Whisper transcribed for this occurrence."),
+    "dat_word": st.column_config.TextColumn("DAT", help="What the FHNW model transcribed for this occurrence."),
+    "dit_similarity": st.column_config.NumberColumn("DIT sim", format="%.2f",
+                                                    help="Alignment similarity of the DIT word to the reference."),
+    "dat_similarity": st.column_config.NumberColumn("DAT sim", format="%.2f",
+                                                    help="Alignment similarity of the DAT word to the reference."),
+    "reference": st.column_config.TextColumn("reference sentence", width="large"),
+    "dit_hypothesis": st.column_config.TextColumn("DIT transcript", width="large"),
+    "dat_hypothesis": st.column_config.TextColumn("DAT transcript", width="large"),
+    "position": st.column_config.NumberColumn("pos", help="Word position in the reference sentence (1 = first)."),
+    "dataset": st.column_config.TextColumn("dataset"),
+}
 
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
@@ -125,40 +158,57 @@ def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
 
 
 def render_overview(ctx: WordContext) -> None:
-    """General figures for the word and its most frequent DIT and DAT variants."""
+    """Compact statistics for the word: occurrences, sentences, and each model's transcriptions by frequency."""
     dit_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-ignorant"]
     dat_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-aware"]
-
-    def variant_count(rows: pd.DataFrame) -> int:
-        hypotheses = rows["hypothesis_word"].dropna()
-        return hypotheses[hypotheses != ctx.word].nunique()
+    dit, dat = summarize_model(dit_rows, ctx.word), summarize_model(dat_rows, ctx.word)
 
     col_occurrences, col_sentences, col_dit, col_dat = st.columns(4)
-    col_occurrences.metric("Occurrences", f"{len(dit_rows):,}",
-                           help=f"How often the word occurs in the {len(ctx.regions)} selected region(s).")
-    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}")
-    col_dit.metric("DIT variants", f"{variant_count(dit_rows):,}",
-                   help="Different words Whisper produced for it, excluding the word itself.")
-    col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
-                   help="Different words the FHNW model produced for it, excluding the word itself.")
+    col_occurrences.metric("Occurrences", f"{dit.occurrences:,}",
+                           help=f"How often the word occurs in the reference, in the {len(ctx.regions)} "
+                                "selected region(s). Each occurrence is aligned once in DIT and once in DAT.")
+    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}",
+                         help="Distinct sentences containing the word; a sentence can contain it more than once.")
+    col_dit.metric("DIT exact match", f"{dit.exact_match_share:.0%}",
+                   help="Share of occurrences Whisper transcribed as the reference word itself. "
+                        "Lower = more dialect influence.")
+    col_dat.metric("DAT exact match", f"{dat.exact_match_share:.0%}",
+                   help="Share of occurrences the FHNW model transcribed as the reference word itself.")
 
-    st.caption("What each model transcribed where the reference has this word, most frequent first.")
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
-        st.markdown("**Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)**")
-        st.dataframe(
-            _hypothesis_table(dit_rows, ctx.word, "dialect-ignorant", ctx.regions, ctx.include_preterite, ctx.dataset)
-            .sort_values("count", ascending=False),
-            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
-            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
-        )
+        _render_variant_frequencies("Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)", dit_rows, dit, ctx,
+                                    with_tfidf=True)
     with col_dat_table:
-        st.markdown("**Dialect-Aware-Transcript (DAT, FHNW STT4SG)**")
-        st.dataframe(
-            _hypothesis_table(dat_rows, ctx.word, "dialect-aware", ctx.regions, ctx.include_preterite, ctx.dataset),
-            width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
-            column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
-        )
+        _render_variant_frequencies("Dialect-Aware-Transcript (DAT, FHNW STT4SG)", dat_rows, dat, ctx,
+                                    with_tfidf=False)
+    chart_help(
+        "What each model wrote wherever the reference has this word, most frequent first. Whisper (DIT) ignores "
+        "dialect, the FHNW model (DAT) knows Swiss German, so variants that only DIT has point to dialect.",
+        "Click a column header to sort. Hover a number or column header to see what it means.",
+    )
+
+
+def _render_variant_frequencies(title: str, rows: pd.DataFrame, summary: ModelSummary, ctx: WordContext,
+                                with_tfidf: bool) -> None:
+    """One model's transcriptions of the word as a frequency table; TF-IDF only exists for DIT pairs."""
+    st.markdown(f"**{title}**")
+    st.caption(" · ".join(_count_label(n, label) for n, label in [
+        (summary.variant_count, "variant"), (summary.exact_matches, "exact match"), (summary.deletions, "deletion"),
+    ]))
+    table = variant_frequencies(rows, ctx.word)
+    if with_tfidf:
+        lookup = _dit_tfidf_lookup(ctx.word, ctx.regions, ctx.include_preterite, ctx.dataset)
+        table["TF-IDF"] = [0.0 if kind == DELETION else lookup(t) for t, kind in zip(table["transcription"],
+                                                                                    table["kind"])]
+    st.dataframe(table, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+                 column_config=_VARIANT_FREQUENCY_COLUMN_CONFIG)
+
+
+def _count_label(n: int, noun: str) -> str:
+    """'1 variant', '3 variants', '2 exact matches'."""
+    plural = noun + ("es" if noun.endswith("ch") else "s")
+    return f"{n:,} {noun if n == 1 else plural}"
 
 
 def render_levenshtein_graph(ctx: WordContext) -> None:
@@ -168,11 +218,7 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    col_rank, col_caption = st.columns(2, vertical_alignment="bottom")
-    col_caption.caption(
-        "The reference word is centered; each ring shows the raw Levenshtein distance "
-        "to the reference. Node size represents alignment count."
-    )
+    col_rank, _ = st.columns(2)
     with col_rank:
         rank_by = st.selectbox(
             "Select variants by",
@@ -186,6 +232,13 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     graph = build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
                                          tfidf_by_hypothesis=tfidf_by_hypothesis)
     _levenshtein_graph.render(graph, _GRAPH_RANK_LABELS[rank_by], dark=st.context.theme.type == "dark")
+    chart_help(
+        "Whisper's variants of the word by spelling distance. The word is in the middle, each ring is one more "
+        "letter change away (Levenshtein distance), and bigger nodes occur more often. Lines join variants that "
+        "are spelled alike; solid lines are closer than dashed ones.",
+        "Pick the number of variants and the line distance above the graph. Hover for numbers, click a node to "
+        "highlight its lines or hide it, drag it along its ring, and use Export PNG to save the view.",
+    )
 
 
 def render_regional_distribution(ctx: WordContext) -> None:
@@ -285,13 +338,77 @@ def render_regional_distribution(ctx: WordContext) -> None:
 
     st.altair_chart((cells + labels).properties(height=min(486, 26 * len(row_order) + 40)),
                     width="stretch")
-    st.caption("Darker = more frequent; empty cells are 0. The first row is the exact match; its "
-               "colour is capped at the most frequent variant, so read its values from the labels. "
-               "Absolute counts can mislead because regions have different sample sizes; switch to "
-               "'Share within region' to see what each region produces.")
+    chart_help(
+        "In which regions Whisper wrote the word correctly (first row) and in which it wrote one of the most "
+        "frequent variants (rows below). Darker = more often; the first row's colour is capped, so read its "
+        "numbers from the labels.",
+        "Regions have different amounts of data, so switch 'Values' to 'Share within region' to compare them. "
+        "Change 'Number of variants' for more or fewer rows, and hover a cell for its numbers.",
+    )
 
 
 def render_example_sentences(ctx: WordContext) -> None:
+    """Occurrences tab: a filterable table of every occurrence, or the sentences grouped by DIT variant."""
+    view = st.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get, horizontal=True,
+                    key="occurrence_view", label_visibility="collapsed")
+    if view == "table":
+        _render_occurrence_table(ctx)
+    else:
+        _render_sentences_by_variant(ctx)
+
+
+def _render_occurrence_table(ctx: WordContext) -> None:
+    """Every occurrence of the word with its DIT and DAT transcription; selecting a row shows its details."""
+    table = build_occurrence_table(ctx.word_rows, ctx.word)
+    # Per word, so filter values never refer to another word's transcriptions.
+    key = f"occurrences_{ctx.word}"
+
+    col_search, col_show = st.columns([3, 2], vertical_alignment="bottom")
+    search = col_search.text_input(
+        "Search", key=f"{key}_search", placeholder="Word or sentence text…",
+        help="Case-insensitive; matches the reference sentence, both transcripts and both transcribed words.",
+    )
+    show = col_show.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
+                          key=f"{key}_show")
+    col_dit, col_dat, col_region = st.columns(3)
+    dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),
+                                    key=f"{key}_dit", placeholder="All", help="Most frequent first.")
+    dat_words = col_dat.multiselect("DAT transcription", words_by_frequency(table, "dat_word"),
+                                    key=f"{key}_dat", placeholder="All", help="Most frequent first.")
+    regions_present = set(table["dialect_region"])
+    regions = col_region.multiselect("Region", [r for r in REGIONS if r in regions_present],
+                                     key=f"{key}_regions", placeholder="All",
+                                     help="Narrows this table only; the sidebar filter applies to every tab.")
+
+    filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
+    st.caption(f"{len(filtered):,} of {len(table):,} occurrences")
+
+    columns = list(_OCCURRENCE_COLUMN_CONFIG)
+    if table["dataset"].nunique() > 1:
+        columns.append("dataset")
+    display = filtered.assign(position=filtered["reference_index"] + 1)[columns]
+    # A new key per filter state clears the selection, which would otherwise point at another row.
+    filter_state = hash((search, show, tuple(dit_words), tuple(dat_words), tuple(regions)))
+    event = st.dataframe(display, width="stretch", height=380, hide_index=True,
+                         column_config=_OCCURRENCE_COLUMN_CONFIG, on_select="rerun",
+                         selection_mode="single-row", key=f"{key}_table_{filter_state}")
+    chart_help(
+        "Every place the word appears in the reference, with what Whisper (DIT) and the FHNW model (DAT) wrote "
+        "there. 'sim' is how close that word is to the reference (1 = identical).",
+        "Search or filter above the table and click a column header to sort. Select a row to see its audio "
+        "and word alignment below.",
+    )
+
+    if not event.selection.rows:
+        return
+    row = filtered.iloc[event.selection.rows[0]]
+    st.markdown(f"#### Selected occurrence: {_sentence_header(row)}")
+    render_audio_gate()
+    sentence_rows = ctx.sentence_rows[ctx.sentence_rows["path"] == row["path"]]
+    _render_sentence_details(row, sentence_rows, ctx.word, ctx.dataset)
+
+
+def _render_sentences_by_variant(ctx: WordContext) -> None:
     """Sentences grouped by DIT hypothesis (TF-IDF desc).
     Two-level pagination: outer pager selects which variants to show; inner shows sentences.
     Matches and deletions sort to the bottom (TF-IDF = 0).
@@ -326,6 +443,9 @@ def render_example_sentences(ctx: WordContext) -> None:
     n_unique_sentences = unique_paths["path"].nunique()
     st.markdown(f"**Sentences with word-level alignment**: {n_unique_sentences:,} sentences "
                 f"across {len(variant_order)} DIT variants")
+    # The list below can be long, so its help goes on top instead of underneath.
+    chart_help("The sentences grouped by what Whisper (DIT) wrote for the word, most region-typical variant first.",
+               "Open a sentence for its audio and word alignment. Use the page selectors when there are many.")
 
     # One-time audio password prompt (the only gated feature); rendered once here, where clips appear.
     render_audio_gate()
@@ -488,64 +608,76 @@ def _render_alignment_html(columns: list[dict], hyp_label: str,
     )
 
 
-def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
-    """One sentence expander: region + clip metadata, audio player, reference + hypotheses, alignment HTML,
-    and an optional technical alignment graph."""
-    path = row["path"]
+def _sentence_header(row: pd.Series) -> str:
+    """Region, demographics and the end of the clip ID, e.g. '**ZH** · f · 30-39 · …a1b2c3.flac'."""
     # SDS-200 demographics are sparse; only show gender/age when present (else they render as "nan").
     demographics = " · ".join(str(v) for v in (row["gender"], row["age"]) if pd.notna(v))
-    header = f"**{row['dialect_region']}**" + (f" · {demographics}" if demographics else "") + f" · …{path[-12:]}"
+    return f"**{row['dialect_region']}**" + (f" · {demographics}" if demographics else "") + f" · …{row['path'][-12:]}"
 
-    with st.expander(header):
-        st.markdown(f"**Clip ID:** `{path}`")
 
-        audio_file = resolve_audio_path(path, dataset)
-        if audio_file is None:
-            st.caption(f"Audio file not found locally: `{path}`")
-        elif not audio_unlocked():
-            # Audio is the only gated feature: without the session unlock we never call st.audio,
-            # so no media URL is minted and the clips can't be crawled.
-            st.caption("Audio locked, enter the password above to enable playback.")
-        else:
-            audio_key = f"audio_loaded_{path}"
-            loaded = st.session_state.get(audio_key, False)
-            if not loaded and st.button("▶ Load audio", key=f"load_{path}"):
-                st.session_state[audio_key] = True
-                loaded = True
-            if loaded:
-                st.audio(str(audio_file))
+def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
+    """One sentence as an expander holding its details."""
+    with st.expander(_sentence_header(row)):
+        _render_sentence_details(row, sentence_rows, word, dataset)
 
-        st.markdown(
-            f"**Reference:** {row['reference']}  \n"
-            f"**Hypothesis DIT:** {row['dit_hypothesis']}  \n"
-            f"**Hypothesis DAT:** {row['dat_hypothesis']}"
-        )
 
-        dat_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-aware"])
-        dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-ignorant"])
-        dat_dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dat-dit"])
+def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
+    """Clip ID, audio player, reference + hypotheses, alignment HTML, and an optional technical alignment graph."""
+    path = row["path"]
+    st.markdown(f"**Clip ID:** `{path}`")
 
-        st.markdown(_render_alignment_html(dit_cols, "Hypothesis DIT", searched_word=word),
-                    unsafe_allow_html=True)
-        st.markdown(_render_alignment_html(dat_cols, "Hypothesis DAT", searched_word=word),
-                    unsafe_allow_html=True)
-        st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
-                                           searched_word=None, ref_label="Hypothesis DAT"),
-                    unsafe_allow_html=True)
+    audio_file = resolve_audio_path(path, dataset)
+    if audio_file is None:
+        st.caption(f"Audio file not found locally: `{path}`")
+    elif not audio_unlocked():
+        # Audio is the only gated feature: without the session unlock we never call st.audio,
+        # so no media URL is minted and the clips can't be crawled.
+        st.caption("Audio locked, enter the password above to enable playback.")
+    else:
+        audio_key = f"audio_loaded_{path}"
+        loaded = st.session_state.get(audio_key, False)
+        if not loaded and st.button("▶ Load audio", key=f"load_{path}"):
+            st.session_state[audio_key] = True
+            loaded = True
+        if loaded:
+            st.audio(str(audio_file))
 
-        if st.checkbox("Show technical alignment", key=f"graph_{path}"):
-            png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
+    st.markdown(
+        f"**Reference:** {row['reference']}  \n"
+        f"**Hypothesis DIT:** {row['dit_hypothesis']}  \n"
+        f"**Hypothesis DAT:** {row['dat_hypothesis']}"
+    )
 
-            if png_dit is not None:
-                st.markdown("**REF → DIT: reduced bipartite matching**")
-                st.image(png_dit)
-            png_dat = _reduced_graph_png(row["reference"], row["dat_hypothesis"])
+    dat_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-aware"])
+    dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dialect-ignorant"])
+    dat_dit_cols = _alignment_columns(sentence_rows[sentence_rows["model"] == "dat-dit"])
 
-            if png_dat is not None:
-                st.markdown("**REF → DAT: reduced bipartite matching**")
-                st.image(png_dat)
-            png_dat_dit = _reduced_graph_png(row["dat_hypothesis"], row["dit_hypothesis"])
+    st.markdown(_render_alignment_html(dit_cols, "Hypothesis DIT", searched_word=word),
+                unsafe_allow_html=True)
+    st.markdown(_render_alignment_html(dat_cols, "Hypothesis DAT", searched_word=word),
+                unsafe_allow_html=True)
+    st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
+                                       searched_word=None, ref_label="Hypothesis DAT"),
+                unsafe_allow_html=True)
+    chart_help(
+        "Word-by-word alignment of the sentence: the reference against each transcript, then DAT against DIT. "
+        "The searched word is highlighted; ε means there is no word on that side.",
+        "'Show technical alignment' draws the matching as a graph.",
+    )
 
-            if png_dat_dit is not None:
-                st.markdown("**DAT → DIT: reduced bipartite matching**")
-                st.image(png_dat_dit)
+    if st.checkbox("Show technical alignment", key=f"graph_{path}"):
+        png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
+
+        if png_dit is not None:
+            st.markdown("**REF → DIT: reduced bipartite matching**")
+            st.image(png_dit)
+        png_dat = _reduced_graph_png(row["reference"], row["dat_hypothesis"])
+
+        if png_dat is not None:
+            st.markdown("**REF → DAT: reduced bipartite matching**")
+            st.image(png_dat)
+        png_dat_dit = _reduced_graph_png(row["dat_hypothesis"], row["dit_hypothesis"])
+
+        if png_dat_dit is not None:
+            st.markdown("**DAT → DIT: reduced bipartite matching**")
+            st.image(png_dat_dit)
