@@ -14,9 +14,9 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import (  # noqa: E402
-    DATASET_CHOICES, DEFAULT_DATASET, REGION_COLORS, REGIONS,
     CloudMode, filter_preterite, load_region_alignments_and_metadata, lexicon_search_index,
 )
+from _filters import render_region_filter, shared_filters  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
@@ -38,40 +38,10 @@ EXAMPLE_WORDS = {
 
 
 # --- Page 1 ---
-st.set_page_config(page_title="Dialect Word Lexicon", layout="wide")
 st.title("Dialect Word Lexicon")
 
-# Sidebar filters
-dataset = st.sidebar.selectbox(
-    "Dataset",
-    DATASET_CHOICES,
-    index=DATASET_CHOICES.index(DEFAULT_DATASET),
-    key="selected_dataset",
-    help="Switch between STT4SG-350, SDS-200, or All (both corpora combined).",
-)
-
-region_filter = st.sidebar.multiselect(
-    "Filter regions",
-    REGIONS,
-    default=[],
-    help="Leave empty to include all 7 regions. Pick specific regions to narrow the view.",
-    placeholder="All regions",
-)
-selected_regions = region_filter if region_filter else REGIONS
-
-_chip_css = "\n".join(
-    f'.stMultiSelect [data-baseweb="tag"][aria-label*="{region}"],'
-    f'.stMultiSelect [data-baseweb="tag"]:has([aria-label*="{region}"])'
-    f' {{ background-color: {color} !important; color: white !important; }}'
-    for region, color in REGION_COLORS.items()
-)
-st.markdown(f"<style>{_chip_css}</style>", unsafe_allow_html=True)
-
-include_preterite = st.sidebar.toggle(
-    "Include Preterite sentences",
-    value=True,
-    help="As Swiss German does not have the Preterite tense and replaces it with the Perfect, including such cases "
-         "can introduce noise in the transcripts. Exclude them to focus on dialect specifics; include for more data.")
+dataset, include_preterite = shared_filters()
+selected_regions = render_region_filter()
 
 with st.spinner("Loading alignment data..."):
     # Cached per (dataset, regions, preterite): ref-word frequencies + sidebar counts.
