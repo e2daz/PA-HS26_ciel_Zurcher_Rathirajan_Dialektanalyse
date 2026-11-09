@@ -58,6 +58,24 @@ _GRAPH_RANK_LABELS = {
 
 _VARIANT_TABLE_HEIGHT = 350
 
+# Streamlit groups both step buttons right of the field; this matches the ring graph's "label - n +" control.
+_REGION_VARIANTS_CSS = """
+<style>
+  .st-key-region_dist_top_n [data-testid="stNumberInput"] { display: flex; align-items: center; gap: 8px; }
+  .st-key-region_dist_top_n label { margin: 0; width: auto; }
+  .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] {
+    width: auto; height: auto; gap: 4px; align-items: center; background: transparent; border: none;
+  }
+  .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] > div { display: contents; }
+  .st-key-region_dist_top_n input, .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] {
+    height: 28px; border: 1px solid rgba(128, 128, 128, 0.45); border-radius: 4px;
+  }
+  .st-key-region_dist_top_n input { flex: none; width: 3.2em; padding: 3px; text-align: center; }
+  .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] { width: 30px; }
+  .st-key-region_dist_top_n [data-testid="stNumberInputStepDown"] { order: -1; }
+</style>
+"""
+
 _LABEL_STYLE = (
     "padding: 4px 12px; font-weight: 600; text-align: center; color: #888; "
     "white-space: nowrap; border-bottom: 1px solid #eee;"
@@ -73,6 +91,11 @@ class WordContext:
     regions: list[str]
     include_preterite: bool
     dataset: str
+
+
+def _clamp_region_variants() -> None:
+    """Snap the Regions variant count into range, like the ring graph's controls."""
+    st.session_state["region_dist_top_n"] = min(30, max(5, st.session_state["region_dist_top_n"]))
 
 
 @st.cache_data(max_entries=64, show_spinner=True)
@@ -194,10 +217,12 @@ def render_regional_distribution(ctx: WordContext) -> None:
                  "compare what a region produces instead of raw counts.",
         )
     with col_top_n:
-        top_n = st.slider("Number of variants", min_value=5, max_value=30, value=12, step=1,
-                          key="region_dist_top_n",
-                          help="The most frequent DIT variants of the searched word, shown below "
-                               "the exact match.")
+        st.html(_REGION_VARIANTS_CSS)
+        # No min/max here: Streamlit would keep an out-of-range entry in the field and silently ignore it.
+        top_n = st.number_input("Number of variants", value=12, step=1, key="region_dist_top_n",
+                                on_change=_clamp_region_variants,
+                                help="The most frequent DIT variants of the searched word, shown below "
+                                     "the exact match.")
 
     # Exact match first, then the most frequent variants so the heatmap stays readable.
     variant_counts = counts[counts["hypothesis_word"] != word]
