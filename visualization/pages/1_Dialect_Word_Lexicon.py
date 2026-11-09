@@ -109,8 +109,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
 
 def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preterite: bool, dataset: str) -> None:
     """Word cloud of regionally distinctive pairs, as a way to discover interesting words."""
-    col_mode, col_caption = st.columns(2, vertical_alignment="bottom")
-    mode_label = col_mode.radio(
+    mode_label = st.radio(
         "Compare",
         options=["Reference → DIT (Whisper)", "DAT (FHNW) → DIT (Whisper)"],
         horizontal=True,
@@ -119,8 +118,6 @@ def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preteri
     )
     mode: CloudMode = "ref_dit" if mode_label.startswith("Reference") else "dat_dit"
 
-    with col_caption:
-        overview.render_caption(mode)
     table = overview.compute_top_table(regions, include_preterite, mode, dataset)
 
     if table.empty:
@@ -128,6 +125,7 @@ def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preteri
         return
 
     overview.render_word_cloud(table, on_click=lambda: _open_clicked_pair(ref_counts.index))
+    overview.render_caption(mode)
     overview.render_top_candidates_expander(table, mode)
 
 
