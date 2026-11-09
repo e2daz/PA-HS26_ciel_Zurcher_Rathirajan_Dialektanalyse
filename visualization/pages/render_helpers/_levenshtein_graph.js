@@ -1,0 +1,486 @@
+const svg = d3.select("#graph-svg");
+const width = 900, height = 620, center = {x: width / 2, y: height / 2};
+const root = svg.append("g");
+const zoom = d3.zoom().scaleExtent([0.45, 4]).on("zoom", (event) => root.attr("transform", event.transform));
+svg.call(zoom);
+const message = d3.select("#graph-message");
+const hideSelected = d3.select("#hide-selected");
+const hiddenMenu = d3.select("#hidden-menu");
+const variantSummary = d3.select("#variant-summary");
+const variantCountKey = "levenshteinRing:variantCount";
+const defaultVariantCount = 10, minVariantCount = 5;
+// Each redraw reruns the layout, so wait for the user to stop clicking or typing.
+const variantRedrawDelayMs = 300;
+let variantRedrawTimer;
+let edgeThreshold = 1;
+let edgeThresholdChosen = false;
+let refreshEdges = () => {};
+let selectedId = null;
+
+const edgeStepper = createStepper("edge-distance", value => {
+  edgeThresholdChosen = true;
+  edgeThreshold = value;
+  refreshEdges();
+});
+const variantStepper = createStepper("variant-count", value => {
+  clearTimeout(variantRedrawTimer);
+  variantRedrawTimer = setTimeout(() => {
+    variantCount = value;
+    saveVariantCount();
+    render();
+  }, variantRedrawDelayMs);
+});
+const availableVariants = graphData.nodes.length - 1;
+variantStepper.setRange(Math.min(minVariantCount, availableVariants), availableVariants);
+let variantCount = variantStepper.set(loadVariantCount());
+let dragging = false;
+
+// Per reference word, so manual grouping survives the iframe being rebuilt (e.g. another variant count).
+// Storing angles instead of coordinates keeps them valid when the ring spacing changes.
+const storageKey = "levenshteinRing:" + graphData.reference;
+const savedState = loadSavedState();
+let savedAngles = savedState.angles || {};
+const hiddenIds = new Set(savedState.hidden || []);
+
+// A − / number / + control. Valid values apply while typing, without rewriting the text, so "1" can
+// still become "12"; Enter or blur then snaps anything else into range, and an empty field keeps the
+// last value. `set` updates the control without calling `onChange` and returns the clamped value.
+function createStepper(id, onChange) {
+  const input = d3.select("#" + id);
+  const decrease = d3.select("#" + id + "-decrease");
+  const increase = d3.select("#" + id + "-increase");
+  let value = +input.property("value");
+  const min = () => +input.attr("min");
+  const max = () => +input.attr("max");
+
+  function show(next) {
+    value = next;
+    decrease.property("disabled", next <= min());
+    increase.property("disabled", next >= max());
+  }
+
+  function set(next) {
+    const clamped = Math.min(max(), Math.max(min(), Math.round(next)));
+    input.property("value", clamped);
+    show(clamped);
+    return clamped;
+  }
+
+  function change(next) {
+    const previous = value;
+    if (set(next) !== previous) onChange(value);
+  }
+
+  decrease.on("click", () => change(value - 1));
+  increase.on("click", () => change(value + 1));
+  input.on("input", function() {
+    const next = this.valueAsNumber;
+    if (Number.isInteger(next) && next >= min() && next <= max() && next !== value) {
+      show(next);
+      onChange(next);
+    }
+  });
+  input.on("change", function() {
+    change(Number.isNaN(this.valueAsNumber) ? value : this.valueAsNumber);
+  });
+
+  return {set, setRange(low, high) { input.attr("min", low).attr("max", high); }};
+}
+
+function loadVariantCount() {
+  try {
+    return +sessionStorage.getItem(variantCountKey) || defaultVariantCount;
+  } catch {
+    return defaultVariantCount;
+  }
+}
+
+function saveVariantCount() {
+  try {
+    sessionStorage.setItem(variantCountKey, variantCount);
+  } catch {
+    // Storage can be blocked; the count then just starts at the default next time.
+  }
+}
+
+function loadSavedState() {
+  try {
+    return JSON.parse(sessionStorage.getItem(storageKey)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveState() {
+  try {
+    sessionStorage.setItem(storageKey, JSON.stringify({angles: savedAngles, hidden: [...hiddenIds]}));
+  } catch {
+    // Storage can be blocked; the graph still works, the arrangement just isn't remembered.
+  }
+}
+
+function showTooltip(event, lines) {
+  hideTooltip();
+  const tooltip = d3.select("body").append("div").attr("id", "graph-tooltip")
+    .style("position", "fixed").style("left", (event.clientX + 12) + "px")
+    .style("top", (event.clientY + 12) + "px").style("background", colors.tooltip_bg)
+    .style("color", colors.text).style("border", "1px solid " + colors.tooltip_border)
+    .style("border-radius", "4px").style("padding", "7px 9px").style("font-size", "12px")
+    .style("box-shadow", "0 2px 6px #0003").style("pointer-events", "none");
+  // .text() per line: labels come from ASR output and must not be parsed as HTML.
+  lines.forEach(line => tooltip.append("div").text(line));
+}
+
+function hideTooltip() {
+  d3.select("#graph-tooltip").remove();
+}
+
+function nodeLines(node) {
+  if (node.kind === "reference") return ["Reference: " + node.label];
+  const regions = Object.entries(node.region_counts || {})
+    .map(([region, count]) => region + " (" + count + ")").join(", ");
+  return [
+    node.label,
+    "Reference distance: " + node.distance,
+    "Alignments: " + node.count,
+    "Mean similarity: " + node.mean_similarity,
+    "TF-IDF: " + node.tfidf,
+    "Regions: " + (regions || "–"),
+  ];
+}
+
+function edgeOpacity(distance, maximumVisibleDistance) {
+  if (distance > maximumVisibleDistance) return 0.04;
+  return Math.max(0.18, 0.92 - (distance - 1) * 0.16);
+}
+
+function edgeWidth(distance) {
+  return Math.max(0.7, 2.5 - (distance - 1) * 0.28);
+}
+
+function edgeDash(distance) {
+  return distance === 1 ? null : (Math.max(3, distance + 2) + " " + Math.max(3, distance + 1));
+}
+
+// Shrinks hypothesis nodes and labels as more variants are shown so rings stay readable.
+let nodeScale = 1;
+
+// Keeps the first ring clear of the centre so the reference and its distance-1 variants don't cover
+// each other; the remaining rings share the rest of the space evenly.
+function ringScale(maxDistance) {
+  const outerRadius = 270, maxStep = 115, minFirstRing = 70;
+  const first = Math.max(minFirstRing, Math.min(maxStep, outerRadius / maxDistance));
+  const step = maxDistance > 1 ? Math.min(maxStep, (outerRadius - first) / (maxDistance - 1)) : 0;
+  return distance => distance === 0 ? 0 : first + (distance - 1) * step;
+}
+
+function nodeRadius(node) {
+  return node.kind === "reference" ? 20 : (10 + Math.min(12, Math.sqrt(node.count || 1) * 1.4)) * nodeScale;
+}
+
+function labelFontSize(node) {
+  return node.kind === "reference" ? 14 : Math.max(10.5, 12 * nodeScale);
+}
+
+// Half the angular room a node needs, in px: labels are often wider than their circle.
+function nodeFootprint(node) {
+  const longestLine = d3.max(node.label_lines, line => line.length);
+  return Math.max(nodeRadius(node), longestLine * labelFontSize(node) * 0.3) + 3;
+}
+
+// Forces only approximate spacing, and snapping onto the ring can undo it, so finish per ring.
+// A ring too full for every label shares the available room evenly.
+function spreadAlongRings(nodes, ringRadius) {
+  const rings = d3.group(nodes.filter(d => d.kind !== "reference"), d => d.distance);
+  for (const [distance, ringNodes] of rings) {
+    if (ringNodes.length < 2) continue;
+    ringNodes.sort((a, b) => a.angle - b.angle);
+    const wanted = ringNodes.map(node => nodeFootprint(node) / ringRadius(distance));
+    const fit = Math.min(1, Math.PI / d3.sum(wanted));
+    const halfAngle = wanted.map(angle => angle * fit);
+    for (let pass = 0; pass < 60; pass++) {
+      ringNodes.forEach((node, index) => {
+        const nextIndex = (index + 1) % ringNodes.length;
+        const next = ringNodes[nextIndex];
+        const gap = next.angle - node.angle + (nextIndex === 0 ? 2 * Math.PI : 0);
+        const overlap = halfAngle[index] + halfAngle[nextIndex] - gap;
+        if (overlap > 0) {
+          node.angle -= overlap / 2;
+          next.angle += overlap / 2;
+        }
+      });
+    }
+  }
+}
+
+// The only way a hypothesis node gets a position: the radius always comes from its Levenshtein distance.
+function placeOnRing(node, angle, ringRadius) {
+  node.angle = angle;
+  node.x = center.x + ringRadius(node.distance) * Math.cos(angle);
+  node.y = center.y + ringRadius(node.distance) * Math.sin(angle);
+}
+
+function layout(nodes, edges, ringRadius) {
+  // Deterministic start: evenly spaced angles per ring, then let forces settle.
+  const byDistance = d3.group(nodes, d => d.distance);
+  for (const [distance, ringNodes] of byDistance) {
+    ringNodes.forEach((node, index) => {
+      const angle = -Math.PI / 2 + 2 * Math.PI * index / ringNodes.length + distance * 0.5;
+      node.x = center.x + ringRadius(distance) * Math.cos(angle);
+      node.y = center.y + ringRadius(distance) * Math.sin(angle);
+    });
+  }
+  const reference = nodes.find(d => d.kind === "reference");
+  if (reference) { reference.fx = center.x; reference.fy = center.y; }
+
+  const maxEdge = Math.max(1, d3.max(edges, e => e.distance) || 1);
+  const links = edges.map(e => ({source: e.source, target: e.target, distance: e.distance}));
+  const simulation = d3.forceSimulation(nodes)
+    .force("radial", d3.forceRadial(d => ringRadius(d.distance), center.x, center.y).strength(1))
+    .force("link", d3.forceLink(links).id(d => d.id)
+      .distance(d => ringRadius(d.distance) * 0.6)
+      .strength(d => 0.08 * Math.pow(1 - (d.distance - 1) / maxEdge, 2)))
+    // Repulsion spreads variants around the full ring; links only decide who neighbours whom.
+    .force("charge", d3.forceManyBody().strength(d => d.kind === "reference" ? 0 : -420))
+    .force("collide", d3.forceCollide(d => nodeFootprint(d) + 3))
+    .stop();
+  for (let i = 0; i < 300; i++) simulation.tick();
+  // Snap back onto the ring so ring membership stays exact.
+  for (const node of nodes) node.angle = Math.atan2(node.y - center.y, node.x - center.x);
+  spreadAlongRings(nodes, ringRadius);
+  for (const node of nodes) {
+    if (node.kind === "reference") continue;
+    placeOnRing(node, node.angle, ringRadius);
+    node.defaultAngle = node.angle;
+    if (savedAngles[node.id] !== undefined) placeOnRing(node, savedAngles[node.id], ringRadius);
+  }
+  return new Map(nodes.map(d => [d.id, d]));
+}
+
+function render() {
+  root.selectAll("*").remove();
+  if (graphData.nodes.length <= 1) {
+    message.text("No hypothesis variants are available for this reference word.");
+    d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
+    return;
+  }
+  message.text("Solid edges are smaller pairwise distances. Hover a node or edge for details; click a node to highlight its edges or hide it (click empty space to clear); drag a node along its ring to group variants.");
+  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabel + ".");
+  nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
+  // Variants arrive ranked, so the first n hypothesis nodes are the top n.
+  const nodes = graphData.nodes.slice(0, variantCount + 1).map(d => ({...d}));
+  const shownIds = new Set(nodes.map(d => d.id));
+  const edges = graphData.edges.filter(e => shownIds.has(e.source) && shownIds.has(e.target));
+  if (!shownIds.has(selectedId)) selectedId = null;
+  const maxDistance = Math.max(1, d3.max(nodes, d => d.distance));
+  const ringRadius = ringScale(maxDistance);
+  const positions = layout(nodes, edges, ringRadius);
+
+  const rings = root.append("g").attr("class", "rings");
+  for (let distance = 1; distance <= maxDistance; distance++) {
+    const radius = ringRadius(distance);
+    rings.append("circle").attr("cx", center.x).attr("cy", center.y).attr("r", radius)
+      .attr("fill", "none").attr("stroke", colors.ring).attr("stroke-dasharray", "3 4");
+  }
+
+  const edgeLayer = root.append("g").attr("class", "edges");
+  const positionNodes = selection => selection
+    .attr("transform", d => "translate(" + positions.get(d.id).x + "," + positions.get(d.id).y + ")");
+  const positionEdges = selection => selection
+    .attr("x1", d => positions.get(d.source).x).attr("y1", d => positions.get(d.source).y)
+    .attr("x2", d => positions.get(d.target).x).attr("y2", d => positions.get(d.target).y);
+  const positionEdgeLabels = selection => selection
+    .attr("x", d => (positions.get(d.source).x + positions.get(d.target).x) / 2)
+    .attr("y", d => (positions.get(d.source).y + positions.get(d.target).y) / 2);
+
+  const edgeSelection = edgeLayer.selectAll("line").data(edges).join("line")
+    .call(positionEdges)
+    .attr("stroke", colors.edge)
+    .attr("stroke-dasharray", d => edgeDash(d.distance))
+    .on("mouseenter", (event, d) => showTooltip(event, ["Pairwise Levenshtein distance: " + d.distance]))
+    .on("mouseleave", hideTooltip);
+  // Dragging redraws only the moved node's edges, which matters at thousands of edges.
+  const incidentEdges = new Map(nodes.map(node => [node.id, []]));
+  edgeSelection.each(function(d) {
+    incidentEdges.get(d.source).push(this);
+    incidentEdges.get(d.target).push(this);
+  });
+  // Distance labels for the selected node's edges; drawn above edges, below nodes.
+  const edgeLabelLayer = root.append("g").attr("class", "edge-labels").style("pointer-events", "none");
+
+  const isIncident = d => selectedId !== null && (d.source === selectedId || d.target === selectedId);
+  const isEdgeShown = d => !hiddenIds.has(d.source) && !hiddenIds.has(d.target);
+
+  function updateHiddenMenu() {
+    const hiddenNodes = nodes.filter(d => hiddenIds.has(d.id));
+    hiddenMenu.property("hidden", hiddenNodes.length === 0);
+    if (hiddenNodes.length === 0) hiddenMenu.property("open", false);
+    d3.select("#hidden-summary").text("Hidden (" + hiddenNodes.length + ")");
+    d3.select("#hidden-list").selectAll("button").data(hiddenNodes, d => d.id).join("button")
+      .attr("type", "button").attr("title", "Show this variant again").text(d => d.label)
+      .on("click", (event, d) => {
+        hiddenIds.delete(d.id);
+        saveState();
+        updateEdges();
+      });
+  }
+
+  function updateEdges() {
+    const visible = edgeThreshold;
+    const highlighted = d => isIncident(d) && isEdgeShown(d) && d.distance <= visible;
+    edgeSelection
+      .style("display", d => isEdgeShown(d) ? null : "none")
+      .attr("stroke", d => highlighted(d) ? colors.highlight : colors.edge)
+      .attr("opacity", d => {
+        if (selectedId === null) return edgeOpacity(d.distance, visible);
+        if (highlighted(d)) return 1;
+        return d.distance <= visible ? 0.07 : 0.02;
+      })
+      .attr("stroke-width", d => highlighted(d) ? 3 : edgeWidth(d.distance));
+    edgeSelection.filter(highlighted).raise();
+
+    // Fade every node that is not the selection, one of its visible neighbours, or the reference.
+    const neighbours = new Set([selectedId]);
+    edges.filter(highlighted).forEach(d => { neighbours.add(d.source); neighbours.add(d.target); });
+    nodeSelection
+      .style("display", n => hiddenIds.has(n.id) ? "none" : null)
+      .attr("opacity", n => selectedId === null || n.kind === "reference" || neighbours.has(n.id) ? 1 : 0.2);
+    nodeSelection.select("circle")
+      .attr("stroke", n => n.id === selectedId ? colors.highlight
+        : (n.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke))
+      .attr("stroke-width", n => n.id === selectedId ? 3.5 : 1.5);
+
+    edgeLabelLayer.selectAll("text").data(edges.filter(highlighted)).join("text")
+      .call(positionEdgeLabels)
+      .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 11).attr("font-weight", 700)
+      .attr("fill", colors.highlight)
+      .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+      .text(d => d.distance);
+
+    hideSelected.property("disabled", selectedId === null);
+    updateHiddenMenu();
+  }
+
+  const nodeLayer = root.append("g").attr("class", "nodes");
+  const nodeSelection = nodeLayer.selectAll("g").data(nodes).join("g")
+    .call(positionNodes)
+    .style("cursor", d => d.kind === "reference" ? "default" : "grab")
+    .on("mouseenter", (event, d) => { if (!dragging) showTooltip(event, nodeLines(d)); })
+    .on("mouseleave", hideTooltip)
+    .on("click", (event, d) => {
+      event.stopPropagation();
+      // The reference has no pairwise edges, so selecting it would only fade the graph.
+      if (d.kind === "reference") return;
+      selectedId = selectedId === d.id ? null : d.id;
+      updateEdges();
+    });
+  // The small click distance keeps a slightly shaky click a selection instead of a drag.
+  nodeSelection.filter(d => d.kind !== "reference").call(d3.drag().clickDistance(4)
+    .on("start", () => { dragging = true; hideTooltip(); })
+    .on("drag", function(event, d) {
+      // Only the angle follows the pointer, so the node stays on the ring of its computed distance.
+      placeOnRing(d, Math.atan2(event.y - center.y, event.x - center.x), ringRadius);
+      savedAngles[d.id] = d.angle;
+      d3.select(this).call(positionNodes);
+      d3.selectAll(incidentEdges.get(d.id)).call(positionEdges);
+      edgeLabelLayer.selectAll("text").call(positionEdgeLabels);
+    })
+    .on("end", () => { dragging = false; saveState(); }));
+  nodeSelection.append("circle").attr("r", nodeRadius)
+    .attr("fill", d => d.kind === "reference" ? colors.ref_fill : colors.hyp_fill)
+    .attr("stroke", d => d.kind === "reference" ? colors.ref_stroke : colors.hyp_stroke)
+    .attr("stroke-width", 1.5);
+  // Long labels overflow the count-sized circles, so the halo keeps them readable on any background.
+  nodeSelection.append("text").attr("text-anchor", "middle")
+    .attr("fill", colors.text).attr("font-size", labelFontSize).attr("font-weight", 500)
+    .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+    .attr("stroke-linejoin", "round")
+    .selectAll("tspan").data(d => d.label_lines.map(line => ({line, total: d.label_lines.length}))).join("tspan")
+    .attr("x", 0)
+    .attr("dy", (d, i) => i === 0 ? ((1 - d.total) * 0.55 + 0.35) + "em" : "1.1em")
+    .text(d => d.line);
+
+  // Above the nodes so a node can never cover a ring's distance; ignores the pointer so nodes stay clickable.
+  const ringLabelLayer = root.append("g").attr("class", "ring-labels").style("pointer-events", "none");
+  for (let distance = 1; distance <= maxDistance; distance++) {
+    ringLabelLayer.append("text").attr("x", center.x).attr("y", center.y - ringRadius(distance))
+      .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 12).attr("font-weight", 600)
+      .attr("fill", colors.muted)
+      .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
+      .text(distance === maxDistance ? "distance " + distance : distance);
+  }
+
+  svg.on("click", () => {
+    selectedId = null;
+    updateEdges();
+  });
+  hideSelected.on("click", () => {
+    hiddenIds.add(selectedId);
+    selectedId = null;
+    saveState();
+    updateEdges();
+  });
+  d3.select("#show-all-hidden").on("click", () => {
+    nodes.forEach(d => hiddenIds.delete(d.id));
+    saveState();
+    updateEdges();
+  });
+  edgeStepper.setRange(1, Math.max(1, d3.max(edges, d => d.distance) || 1));
+  // A distance the user picked stays as variants are added; otherwise follow the default for this count.
+  edgeThreshold = edgeStepper.set(edgeThresholdChosen ? edgeThreshold : graphData.default_edge_distance_by_count[variantCount]);
+  refreshEdges = updateEdges;
+  updateEdges();
+
+  d3.select("#reset-layout").on("click", () => {
+    savedAngles = {};
+    saveState();
+    nodes.filter(d => d.kind !== "reference").forEach(d => placeOnRing(d, d.defaultAngle, ringRadius));
+    nodeSelection.call(positionNodes);
+    edgeSelection.call(positionEdges);
+    edgeLabelLayer.selectAll("text").call(positionEdgeLabels);
+    svg.transition().duration(250).call(zoom.transform, d3.zoomIdentity);
+  });
+}
+
+// Draws what is on screen right now: zoom, moved and hidden nodes, and the current selection.
+function exportPng() {
+  const box = svg.node().getBoundingClientRect();
+  // The viewBox is letterboxed in a wider iframe, and panning can bring those margins into view.
+  const scale = Math.min(box.width / width, box.height / height);
+  const viewWidth = box.width / scale, viewHeight = box.height / scale;
+  const clone = svg.node().cloneNode(true);
+  clone.setAttribute("viewBox", [(width - viewWidth) / 2, (height - viewHeight) / 2, viewWidth, viewHeight].join(" "));
+  clone.setAttribute("width", viewWidth);
+  clone.setAttribute("height", viewHeight);
+  clone.setAttribute("font-family", "sans-serif");
+  const svgUrl = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(clone)], {type: "image/svg+xml"}));
+
+  const image = new Image();
+  image.onerror = () => {
+    URL.revokeObjectURL(svgUrl);
+    message.text("The PNG could not be created in this browser.");
+  };
+  image.onload = () => {
+    const pixelRatio = 3;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(viewWidth * pixelRatio);
+    canvas.height = Math.round(viewHeight * pixelRatio);
+    const context = canvas.getContext("2d");
+    // An SVG has no background of its own; the halo colour is the page background.
+    context.fillStyle = colors.label_halo;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    URL.revokeObjectURL(svgUrl);
+    canvas.toBlob(blob => {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "levenshtein_" + graphData.reference.replace(/[\\/:*?"<>|\s]+/g, "_") + ".png";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    }, "image/png");
+  };
+  image.src = svgUrl;
+}
+
+d3.select("#export-png").on("click", exportPng);
+render();

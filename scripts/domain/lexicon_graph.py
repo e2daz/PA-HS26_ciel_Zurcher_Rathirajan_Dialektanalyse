@@ -1,5 +1,6 @@
 """Data preparation for interactive reference-word lexicon graphs."""
 
+from collections.abc import Iterable
 from itertools import combinations
 from typing import Any, Literal
 
@@ -14,6 +15,60 @@ _RANK_KEYS: dict[str, list[str]] = {
     "count": ["count", "tfidf"],
     "similarity": ["mean_similarity", "count"],
 }
+
+LABEL_LINE_CHARS = 8
+MAX_DEFAULT_VISIBLE_EDGES = 150
+
+
+def wrap_label(word: str, max_chars: int = LABEL_LINE_CHARS) -> list[str]:
+    """Split a word into evenly long display lines of at most `max_chars`.
+
+    Transcribed words have no spaces or hyphens to break at, so the split is by
+    character. Even lines avoid a lone trailing letter; no hyphen is inserted
+    because it could be misread as part of the transcription.
+    """
+    if max_chars <= 0:
+        raise ValueError(f"max_chars must be positive; got {max_chars}")
+    line_count = max(1, (len(word) + max_chars - 1) // max_chars)
+    base, extra = divmod(len(word), line_count)
+    lines, start = [], 0
+    for index in range(line_count):
+        end = start + base + (index < extra)
+        lines.append(word[start:end])
+        start = end
+    return lines
+
+
+def default_edge_threshold(distances: Iterable[int],
+                           max_visible_edges: int = MAX_DEFAULT_VISIBLE_EDGES) -> int:
+    """Initial edge-distance threshold: the median, lowered so large graphs start uncluttered.
+
+    At least the smallest distance is returned, so some edges are always visible.
+    """
+    ordered = sorted(distances)
+    if not ordered:
+        return 1
+    median = ordered[len(ordered) // 2]
+    if len(ordered) <= max_visible_edges:
+        return median
+    # Everything below the first distance past the cap fits within the cap.
+    return min(median, max(ordered[0], ordered[max_visible_edges] - 1))
+
+
+def _default_edge_thresholds_by_count(words: list[str], edges: list[dict[str, Any]]) -> list[int]:
+    """`default_edge_threshold` for showing only the first n of `words`, indexed by n."""
+    position = {f"hypothesis:{word}": index for index, word in enumerate(words, start=1)}
+    # An edge appears once its later word is shown, and `target` is always the later one.
+    added_at: list[list[int]] = [[] for _ in range(len(words) + 1)]
+    for edge in edges:
+        added_at[position[edge["target"]]].append(edge["distance"])
+
+    visible: list[int] = []
+    thresholds = []
+    for new_distances in added_at:
+        visible.extend(new_distances)
+        thresholds.append(default_edge_threshold(visible))
+    return thresholds
 
 
 def build_levenshtein_ring_graph(
@@ -51,10 +106,17 @@ def build_levenshtein_ring_graph(
     if candidates.empty:
         return {
             "reference": reference_word,
-            "nodes": [{"id": "reference", "label": reference_word, "kind": "reference", "distance": 0}],
+            "nodes": [{
+                "id": "reference",
+                "label": reference_word,
+                "label_lines": wrap_label(reference_word),
+                "kind": "reference",
+                "distance": 0,
+            }],
             "edges": [],
             "max_distance": 0,
             "max_edge_distance": 0,
+            "default_edge_distance_by_count": [1],
             "shown_count": 0,
             "candidate_count": 0,
             "rank_by": rank_by,
@@ -86,6 +148,7 @@ def build_levenshtein_ring_graph(
     nodes = [{
         "id": "reference",
         "label": reference_word,
+        "label_lines": wrap_label(reference_word),
         "kind": "reference",
         "distance": 0,
     }]
@@ -94,6 +157,7 @@ def build_levenshtein_ring_graph(
         nodes.append({
             "id": f"hypothesis:{word}",
             "label": word,
+            "label_lines": wrap_label(word),
             "kind": "hypothesis",
             "distance": int(Levenshtein.distance(reference_word, word)),
             "count": int(row["count"]),
@@ -123,6 +187,7 @@ def build_levenshtein_ring_graph(
         "edges": edges,
         "max_distance": max((node["distance"] for node in nodes), default=0),
         "max_edge_distance": max((edge["distance"] for edge in edges), default=0),
+        "default_edge_distance_by_count": _default_edge_thresholds_by_count(words, edges),
         "shown_count": len(grouped),
         "candidate_count": candidate_count,
         "rank_by": rank_by,
