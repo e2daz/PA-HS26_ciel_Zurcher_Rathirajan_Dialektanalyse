@@ -26,6 +26,7 @@ from bipartite_matching import build_full_bipartite_graph, solve_matching  # noq
 from lexicon_graph import build_levenshtein_ring_graph  # noqa: E402
 from plot_helpers import plot_reduced_bipartite_graph_with_matching  # noqa: E402
 from preprocessing import tokenize  # noqa: E402
+from word_overview import summarize_model  # noqa: E402
 from word_similarity_calculator import WordSimilarityCalculator  # noqa: E402
 
 _HYPOTHESIS_TABLE_COLUMN_CONFIG = {
@@ -125,22 +126,22 @@ def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
 
 
 def render_overview(ctx: WordContext) -> None:
-    """General figures for the word and its most frequent DIT and DAT variants."""
+    """Compact statistics for the word: occurrences, sentences, and each model's transcriptions by frequency."""
     dit_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-ignorant"]
     dat_rows = ctx.word_rows[ctx.word_rows["model"] == "dialect-aware"]
-
-    def variant_count(rows: pd.DataFrame) -> int:
-        hypotheses = rows["hypothesis_word"].dropna()
-        return hypotheses[hypotheses != ctx.word].nunique()
+    dit, dat = summarize_model(dit_rows, ctx.word), summarize_model(dat_rows, ctx.word)
 
     col_occurrences, col_sentences, col_dit, col_dat = st.columns(4)
-    col_occurrences.metric("Occurrences", f"{len(dit_rows):,}",
-                           help=f"How often the word occurs in the {len(ctx.regions)} selected region(s).")
-    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}")
-    col_dit.metric("DIT variants", f"{variant_count(dit_rows):,}",
-                   help="Different words Whisper produced for it, excluding the word itself.")
-    col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
-                   help="Different words the FHNW model produced for it, excluding the word itself.")
+    col_occurrences.metric("Occurrences", f"{dit.occurrences:,}",
+                           help=f"How often the word occurs in the reference, in the {len(ctx.regions)} "
+                                "selected region(s). Each occurrence is aligned once in DIT and once in DAT.")
+    col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}",
+                         help="Distinct sentences containing the word; a sentence can contain it more than once.")
+    col_dit.metric("DIT exact match", f"{dit.exact_match_share:.0%}",
+                   help="Share of occurrences Whisper transcribed as the reference word itself. "
+                        "Lower = more dialect influence.")
+    col_dat.metric("DAT exact match", f"{dat.exact_match_share:.0%}",
+                   help="Share of occurrences the FHNW model transcribed as the reference word itself.")
 
     st.caption("What each model transcribed where the reference has this word, most frequent first.")
     col_dit_table, col_dat_table = st.columns(2)
