@@ -17,6 +17,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "domain"))
 sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
+from _help import chart_help  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -174,8 +175,6 @@ def render_overview(ctx: WordContext) -> None:
     col_dat.metric("DAT exact match", f"{dat.exact_match_share:.0%}",
                    help="Share of occurrences the FHNW model transcribed as the reference word itself.")
 
-    st.caption("What each model transcribed where the reference has this word, most frequent first. "
-               "Share = percent of all occurrences.")
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
         _render_variant_frequencies("Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)", dit_rows, dit, ctx,
@@ -183,6 +182,11 @@ def render_overview(ctx: WordContext) -> None:
     with col_dat_table:
         _render_variant_frequencies("Dialect-Aware-Transcript (DAT, FHNW STT4SG)", dat_rows, dat, ctx,
                                     with_tfidf=False)
+    chart_help(
+        "What each model wrote wherever the reference has this word, most frequent first. Whisper (DIT) ignores "
+        "dialect, the FHNW model (DAT) knows Swiss German, so variants that only DIT has point to dialect.",
+        "Click a column header to sort. Hover a number or column header to see what it means.",
+    )
 
 
 def _render_variant_frequencies(title: str, rows: pd.DataFrame, summary: ModelSummary, ctx: WordContext,
