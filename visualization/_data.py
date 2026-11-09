@@ -215,7 +215,9 @@ def load_alignments(dataset: str, include_dat_dit: bool = False) -> pd.DataFrame
     return out
 
 
-@st.cache_data
+# A resource, not cache_data: this table has millions of rows, and cache_data would copy it for every
+# caller on every rerun. Callers only read it, so one shared object is safe.
+@st.cache_resource
 def load_region_alignments_and_metadata(regions: tuple[str, ...], dataset: str,
                                         include_dat_dit: bool = False) -> pd.DataFrame:
     """Alignments & metadata for the given dataset, filtered to the selected regions."""
@@ -296,6 +298,15 @@ def lexicon_search_index(dataset: str, regions: tuple[str, ...], include_preteri
         .groupby("reference_word").size().sort_values(ascending=False)
     )
     return ref_counts, int(len(alignments)), int(alignments["path"].nunique())
+
+
+@st.cache_data(max_entries=32)
+def word_sentence_alignments(word: str, regions: tuple[str, ...], dataset: str, include_preterite: bool) -> pd.DataFrame:
+    """Every alignment of the sentences containing `word`, so switching analysis tabs doesn't copy the full table."""
+    alignments = filter_preterite(load_region_alignments_and_metadata(regions, dataset, include_dat_dit=True),
+                                  include_preterite)
+    is_word = (alignments["reference_word"] == word) & (alignments["model"] != "dat-dit")
+    return alignments[alignments["path"].isin(alignments.loc[is_word, "path"].unique())].reset_index(drop=True)
 
 
 @st.cache_data
