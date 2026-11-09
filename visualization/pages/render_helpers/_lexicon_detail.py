@@ -162,8 +162,9 @@ def _render_variant_frequencies(title: str, rows: pd.DataFrame, summary: ModelSu
                                 with_tfidf: bool) -> None:
     """One model's transcriptions of the word as a frequency table; TF-IDF only exists for DIT pairs."""
     st.markdown(f"**{title}**")
-    st.caption(f"{summary.variant_count:,} variants · {summary.exact_matches:,} exact matches · "
-               f"{summary.deletions:,} deletions")
+    st.caption(" · ".join(_count_label(n, label) for n, label in [
+        (summary.variant_count, "variant"), (summary.exact_matches, "exact match"), (summary.deletions, "deletion"),
+    ]))
     table = variant_frequencies(rows, ctx.word)
     if with_tfidf:
         lookup = _dit_tfidf_lookup(ctx.word, ctx.regions, ctx.include_preterite, ctx.dataset)
@@ -171,6 +172,12 @@ def _render_variant_frequencies(title: str, rows: pd.DataFrame, summary: ModelSu
                                                                                     table["kind"])]
     st.dataframe(table, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
                  column_config=_VARIANT_FREQUENCY_COLUMN_CONFIG)
+
+
+def _count_label(n: int, noun: str) -> str:
+    """'1 variant', '3 variants', '2 exact matches'."""
+    plural = noun + ("es" if noun.endswith("ch") else "s")
+    return f"{n:,} {noun if n == 1 else plural}"
 
 
 def render_levenshtein_graph(ctx: WordContext) -> None:
