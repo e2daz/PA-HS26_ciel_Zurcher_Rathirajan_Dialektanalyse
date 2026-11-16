@@ -321,7 +321,7 @@ def render_regional_distribution(ctx: WordContext) -> None:
 def render_example_sentences(ctx: WordContext) -> None:
     """Occurrences tab: a filterable table of every occurrence, or the sentences grouped by DIT variant."""
     view = st.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get, horizontal=True,
-                    key="occurrence_view", label_visibility="collapsed")
+                    key="occurrence_view", label_visibility="collapsed", persist_state="session")
     if view == "table":
         _render_occurrence_table(ctx)
     else:
@@ -336,19 +336,21 @@ def _render_occurrence_table(ctx: WordContext) -> None:
 
     col_search, col_show = st.columns([3, 2], vertical_alignment="bottom")
     search = col_search.text_input(
-        "Search", key=f"{key}_search", placeholder="Word or sentence text…",
+        "Search", key=f"{key}_search", persist_state="session", placeholder="Word or sentence text…",
         help="Case-insensitive; matches the reference sentence, both transcripts and both transcribed words.",
     )
     show = col_show.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
-                          key=f"{key}_show")
+                          key=f"{key}_show", persist_state="session")
     col_dit, col_dat, col_region = st.columns(3)
     dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),
-                                    key=f"{key}_dit", placeholder="All", help="Most frequent first.")
+                                    key=f"{key}_dit", persist_state="session", placeholder="All",
+                                    help="Most frequent first.")
     dat_words = col_dat.multiselect("DAT transcription", words_by_frequency(table, "dat_word"),
-                                    key=f"{key}_dat", placeholder="All", help="Most frequent first.")
+                                    key=f"{key}_dat", persist_state="session", placeholder="All",
+                                    help="Most frequent first.")
     regions_present = set(table["dialect_region"])
     regions = col_region.multiselect("Region", [r for r in REGIONS if r in regions_present],
-                                     key=f"{key}_regions", placeholder="All",
+                                     key=f"{key}_regions", persist_state="session", placeholder="All",
                                      help="Narrows this table only; the sidebar filter applies to every tab.")
 
     filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
