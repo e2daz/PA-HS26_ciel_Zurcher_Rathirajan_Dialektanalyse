@@ -17,6 +17,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "domain"))
 sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
+from _help import chart_help  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -169,7 +170,6 @@ def render_overview(ctx: WordContext) -> None:
     col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
                    help="Different words the FHNW model produced for it, excluding the word itself.")
 
-    st.caption("What each model transcribed where the reference has this word, most frequent first.")
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
         st.markdown("**Dialect-Ignorant-Transcript (DIT, Whisper-large-v2)**")
@@ -186,6 +186,11 @@ def render_overview(ctx: WordContext) -> None:
             width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
             column_config=_HYPOTHESIS_TABLE_COLUMN_CONFIG,
         )
+    chart_help(
+        "What each model wrote wherever the reference has this word, most frequent first. Whisper (DIT) ignores "
+        "dialect, the FHNW model (DAT) knows Swiss German, so variants that only DIT has point to dialect.",
+        "Click a column header to sort. Hover a number or column header to see what it means.",
+    )
 
 
 def render_levenshtein_graph(ctx: WordContext) -> None:
@@ -195,11 +200,7 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    col_rank, col_caption = st.columns(2, vertical_alignment="bottom")
-    col_caption.caption(
-        "The reference word is centered; each ring shows the raw Levenshtein distance "
-        "to the reference. Node size represents alignment count."
-    )
+    col_rank, _ = st.columns(2)
     with col_rank:
         rank_by = st.selectbox(
             "Select variants by",
@@ -213,6 +214,13 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     graph = build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
                                          tfidf_by_hypothesis=tfidf_by_hypothesis)
     _levenshtein_graph.render(graph, _GRAPH_RANK_LABELS[rank_by], dark=st.context.theme.type == "dark")
+    chart_help(
+        "Whisper's variants of the word by spelling distance. The word is in the middle, each ring is one more "
+        "letter change away (Levenshtein distance), and bigger nodes occur more often. Lines join variants that "
+        "are spelled alike; solid lines are closer than dashed ones.",
+        "Pick the number of variants and the line distance above the graph. Hover for numbers, click a node to "
+        "highlight its lines or hide it, drag it along its ring, and use Export PNG to save the view.",
+    )
 
 
 def render_regional_distribution(ctx: WordContext) -> None:
@@ -312,10 +320,13 @@ def render_regional_distribution(ctx: WordContext) -> None:
 
     st.altair_chart((cells + labels).properties(height=min(486, 26 * len(row_order) + 40)),
                     width="stretch")
-    st.caption("Darker = more frequent; empty cells are 0. The first row is the exact match; its "
-               "colour is capped at the most frequent variant, so read its values from the labels. "
-               "Absolute counts can mislead because regions have different sample sizes; switch to "
-               "'Share within region' to see what each region produces.")
+    chart_help(
+        "In which regions Whisper wrote the word correctly (first row) and in which it wrote one of the most "
+        "frequent variants (rows below). Darker = more often; the first row's colour is capped, so read its "
+        "numbers from the labels.",
+        "Regions have different amounts of data, so switch 'Values' to 'Share within region' to compare them. "
+        "Change 'Number of variants' for more or fewer rows, and hover a cell for its numbers.",
+    )
 
 
 def render_example_sentences(ctx: WordContext) -> None:
@@ -354,8 +365,7 @@ def _render_occurrence_table(ctx: WordContext) -> None:
                                      help="Narrows this table only; the sidebar filter applies to every tab.")
 
     filtered = filter_occurrences(table, search, dit_words, dat_words, regions, show)
-    st.caption(f"{len(filtered):,} of {len(table):,} occurrences. Click a column header to sort; select a row "
-               "to see its audio, full transcripts and word alignments.")
+    st.caption(f"{len(filtered):,} of {len(table):,} occurrences")
 
     columns = list(_OCCURRENCE_COLUMN_CONFIG)
     if table["dataset"].nunique() > 1:
@@ -366,6 +376,12 @@ def _render_occurrence_table(ctx: WordContext) -> None:
     event = st.dataframe(display, width="stretch", height=380, hide_index=True,
                          column_config=_OCCURRENCE_COLUMN_CONFIG, on_select="rerun",
                          selection_mode="single-row", key=f"{key}_table_{filter_state}")
+    chart_help(
+        "Every place the word appears in the reference, with what Whisper (DIT) and the FHNW model (DAT) wrote "
+        "there. 'sim' is how close that word is to the reference (1 = identical).",
+        "Search or filter above the table and click a column header to sort. Select a row to see its audio "
+        "and word alignment below.",
+    )
 
     if not event.selection.rows:
         return
@@ -411,6 +427,9 @@ def _render_sentences_by_variant(ctx: WordContext) -> None:
     n_unique_sentences = unique_paths["path"].nunique()
     st.markdown(f"**Sentences with word-level alignment**: {n_unique_sentences:,} sentences "
                 f"across {len(variant_order)} DIT variants")
+    # The list below can be long, so its help goes on top instead of underneath.
+    chart_help("The sentences grouped by what Whisper (DIT) wrote for the word, most region-typical variant first.",
+               "Open a sentence for its audio and word alignment. Use the page selectors when there are many.")
 
     # One-time audio password prompt (the only gated feature); rendered once here, where clips appear.
     render_audio_gate()
@@ -624,6 +643,11 @@ def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: 
     st.markdown(_render_alignment_html(dat_dit_cols, "Hypothesis DIT",
                                        searched_word=None, ref_label="Hypothesis DAT"),
                 unsafe_allow_html=True)
+    chart_help(
+        "Word-by-word alignment of the sentence: the reference against each transcript, then DAT against DIT. "
+        "The searched word is highlighted; ε means there is no word on that side.",
+        "'Show technical alignment' draws the matching as a graph.",
+    )
 
     if st.checkbox("Show technical alignment", key=f"graph_{path}"):
         png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
