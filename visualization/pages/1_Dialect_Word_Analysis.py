@@ -163,20 +163,18 @@ if previous_word and previous_word not in ref_counts.index:
 requested_word = st.session_state.get(WORD_KEY, st.query_params.get(WORD_KEY, ""))
 analysis_open = requested_word in ref_counts.index
 
-if analysis_open:
-    col_back, col_word = st.columns([1, 3], vertical_alignment="bottom")
-    col_back.button("← Back to word selection", on_click=_clear_word, width="stretch")
-else:
-    st.title("Dialect Word Analysis")
-    col_word, col_examples = st.columns([2, 3])
-
-selected_word = col_word.selectbox(
+# The word search sits under the filters, so the analysis tabs can start at the top of the page.
+st.sidebar.divider()
+selected_word = st.sidebar.selectbox(
     "Reference word",
     options=[""] + ref_counts.index.tolist(),
     key=WORD_KEY,
     bind="query-params",
+    placeholder="Type a word…",
     help="Type a Standard German word to see its dialect-specific variants.",
 )
+if analysis_open:
+    st.sidebar.button("← Back to word selection", on_click=_clear_word, width="stretch")
 
 if st.session_state.get("_prev_selected_word") != selected_word:
     for k in [k for k in st.session_state if k.startswith("audio_loaded_")]:
@@ -186,8 +184,9 @@ if st.session_state.get("_prev_selected_word") != selected_word:
 if analysis_open:
     render_analysis(selected_word, selected_regions, include_preterite, dataset)
 else:
-    with col_examples:
-        render_example_words(ref_counts)
+    st.title("Dialect Word Analysis")
+    st.caption("Pick a word in the sidebar, click an example word or click a pair in the word cloud to analyse it.")
+    render_example_words(ref_counts)
 
     st.sidebar.metric("Reference words", f"{len(ref_counts):,}")
     st.sidebar.metric("Alignments", f"{n_alignments:,}")
