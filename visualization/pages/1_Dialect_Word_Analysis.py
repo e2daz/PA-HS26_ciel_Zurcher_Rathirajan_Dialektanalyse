@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
-from _layout import control_row, tab_header  # noqa: E402
+from _layout import control_row, sidebar_counts, tab_header  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
@@ -200,9 +200,7 @@ else:
     st.caption("Pick a word in the sidebar, click an example word or click a pair in the word cloud to analyse it.")
     render_example_words(ref_counts)
 
-    st.sidebar.metric("Reference words", f"{len(ref_counts):,}")
-    st.sidebar.metric("Alignments", f"{n_alignments:,}")
-    st.sidebar.metric("Unique sentences", f"{n_sentences:,}")
+    sidebar_counts(reference_words=len(ref_counts), alignments=n_alignments, sentences=n_sentences)
 
     filtered_out = st.session_state.pop("filtered_out_word", None)
     if filtered_out:
