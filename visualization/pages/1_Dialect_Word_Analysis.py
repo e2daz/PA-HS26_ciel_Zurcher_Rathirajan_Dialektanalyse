@@ -1,5 +1,5 @@
 """
-Dialect Word Lexicon: the app's start page.
+Dialect Word Analysis: the app's start page.
 
 Word selection first (search, example words, word cloud). Choosing a word opens its analysis tabs.
 
@@ -15,13 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
+from _layout import control_row, sidebar_counts, tab_header  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
 EXAMPLE_WORDS = {
     # Lexical: the dialect uses a different word with the same meaning, which Whisper transcribes
     # literally (krankenhaus -> spital, sprechen -> reden, deshalb -> darum, zuvor -> vorher).
-    "Lexical (different word)": [
+    "Lexical": [
         "fahrrad", "krankenhaus", "arbeiten", "hause", "sprechen",
         "junge", "deshalb", "nun", "selbst", "zuvor",
     ],
@@ -29,17 +30,21 @@ EXAMPLE_WORDS = {
     # sound-alike word rather than a dialect spelling. Strongly regional: lösung -> lesung
     # (Wallis 58 %, elsewhere <= 4 %), abend -> oben (Basel 28 %), haben -> habt (Wallis, Bern).
     # Broader: denn -> dann, wann -> wenn, darin -> drin.
-    "Phonetic (sound-alike word)": [
+    "Phonetic": [
         "lösung", "abend", "haben", "denn", "wann", "darin",
     ],
 }
 
-# One entry per tab; a new analysis only needs a render function taking a WordContext.
+# One entry per tab: a render function taking a WordContext and one sentence on what the tab shows.
 ANALYSIS_VIEWS = {
-    "Overview": detail.render_overview,
-    "Levenshtein": detail.render_levenshtein_graph,
-    "Regions": detail.render_regional_distribution,
-    "Occurrences": detail.render_example_sentences,
+    "Overview": (detail.render_overview,
+                 "Which words Whisper (DIT) and the FHNW model (DAT) wrote for this word, and how often."),
+    "Levenshtein": (detail.render_levenshtein_graph,
+                    "Whisper's variants of this word, arranged by how many letters they differ from it."),
+    "Regions": (detail.render_regional_distribution,
+                "In which dialect regions Whisper writes which variant of this word."),
+    "Occurrences": (detail.render_example_sentences,
+                    "Every occurrence of this word, with both transcripts, the audio and the word alignment."),
 }
 
 WORD_KEY = "selected_word"
@@ -68,8 +73,10 @@ def _open_clicked_pair(known_words: pd.Index) -> None:
 
 def render_example_words(ref_counts: pd.Series) -> None:
     """Example-type choice and the example chips it offers, plus the user's own additions."""
+    st.subheader("Example words")
     # Let the user pick which kind of variation the example words should illustrate (DIAL-25).
-    example_type = st.radio(
+    col_type, *_ = control_row()
+    example_type = col_type.radio(
         "Example type",
         options=list(EXAMPLE_WORDS),
         horizontal=True,
@@ -88,7 +95,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
     col_examples, col_add = st.columns([5, 1], vertical_alignment="bottom")
     with col_examples:
         st.pills(
-            "Or pick an example word",
+            "Pick an example word",
             options=example_words,
             key="example_word_pill",
             on_change=_select_example_word,
@@ -96,7 +103,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
             help="Predefined reference words for the selected example type. Add your own with the button on the right.",
         )
     with col_add:
-        with st.popover("+ Add"):
+        with st.popover("+ Add word"):
             st.multiselect(
                 "Your example words",
                 options=ref_counts.index.tolist(),
@@ -109,12 +116,16 @@ def render_example_words(ref_counts: pd.Series) -> None:
 
 def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preterite: bool, dataset: str) -> None:
     """Word cloud of regionally distinctive pairs, as a way to discover interesting words."""
-    mode_label = st.radio(
+    st.subheader("Regionally typical word pairs")
+    col_mode, *_ = control_row()
+    mode_label = col_mode.radio(
         "Compare",
-        options=["Reference → DIT (Whisper)", "DAT (FHNW) → DIT (Whisper)"],
+        options=["Reference → DIT", "DAT → DIT"],
         horizontal=True,
         key="cloud_mode",
         persist_state="session",
+        help="Which two transcripts form the pairs: the reference against Whisper (DIT), or the FHNW model "
+             "(DAT) against Whisper.",
     )
     mode: CloudMode = "ref_dit" if mode_label.startswith("Reference") else "dat_dit"
 
@@ -137,9 +148,10 @@ def render_analysis(word: str, regions: list[str], include_preterite: bool, data
     ctx = detail.WordContext(word, word_rows, sentence_rows, regions, include_preterite, dataset)
 
     tabs = st.tabs(list(ANALYSIS_VIEWS), key="analysis_tab", on_change="rerun", bind="query-params")
-    for tab, render_view in zip(tabs, ANALYSIS_VIEWS.values()):
+    for tab, (render_view, description) in zip(tabs, ANALYSIS_VIEWS.values()):
         if tab.open:
             with tab:
+                tab_header(word, description)
                 render_view(ctx)
 
 
@@ -163,20 +175,18 @@ if previous_word and previous_word not in ref_counts.index:
 requested_word = st.session_state.get(WORD_KEY, st.query_params.get(WORD_KEY, ""))
 analysis_open = requested_word in ref_counts.index
 
-if analysis_open:
-    col_back, col_word = st.columns([1, 3], vertical_alignment="bottom")
-    col_back.button("← Back to word selection", on_click=_clear_word, width="stretch")
-else:
-    st.title("Dialect Word Lexicon")
-    col_word, col_examples = st.columns([2, 3])
-
-selected_word = col_word.selectbox(
+# The word search sits under the filters, so the analysis tabs can start at the top of the page.
+st.sidebar.divider()
+selected_word = st.sidebar.selectbox(
     "Reference word",
     options=[""] + ref_counts.index.tolist(),
     key=WORD_KEY,
     bind="query-params",
+    placeholder="Type a word…",
     help="Type a Standard German word to see its dialect-specific variants.",
 )
+if analysis_open:
+    st.sidebar.button("← Back to word selection", on_click=_clear_word, width="stretch")
 
 if st.session_state.get("_prev_selected_word") != selected_word:
     for k in [k for k in st.session_state if k.startswith("audio_loaded_")]:
@@ -186,12 +196,11 @@ if st.session_state.get("_prev_selected_word") != selected_word:
 if analysis_open:
     render_analysis(selected_word, selected_regions, include_preterite, dataset)
 else:
-    with col_examples:
-        render_example_words(ref_counts)
+    st.title("Dialect Word Analysis")
+    st.caption("Pick a word in the sidebar, click an example word or click a pair in the word cloud to analyse it.")
+    render_example_words(ref_counts)
 
-    st.sidebar.metric("Reference words", f"{len(ref_counts):,}")
-    st.sidebar.metric("Alignments", f"{n_alignments:,}")
-    st.sidebar.metric("Unique sentences", f"{n_sentences:,}")
+    sidebar_counts(reference_words=len(ref_counts), alignments=n_alignments, sentences=n_sentences)
 
     filtered_out = st.session_state.pop("filtered_out_word", None)
     if filtered_out:

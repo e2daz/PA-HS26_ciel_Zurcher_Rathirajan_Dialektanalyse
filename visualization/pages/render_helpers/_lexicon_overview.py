@@ -1,4 +1,4 @@
-"""Word-cloud overview for the Dialect Word Lexicon page."""
+"""Word-cloud overview for the Dialect Word Analysis page."""
 from collections.abc import Callable
 
 import numpy as np

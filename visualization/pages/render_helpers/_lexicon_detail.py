@@ -1,4 +1,4 @@
-"""Detail view for the Dialect Word Lexicon page."""
+"""Detail view for the Dialect Word Analysis page."""
 import html
 import io
 import sys
@@ -18,6 +18,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
 from _help import chart_help  # noqa: E402
+from _layout import control_row  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -62,13 +63,11 @@ _GRAPH_RANK_LABELS = {
 
 _VARIANT_TABLE_HEIGHT = 350
 
-# Streamlit groups both step buttons right of the field; this matches the ring graph's "label - n +" control.
+# Streamlit groups both step buttons right of the field; this matches the ring graph's "− n +" steppers.
 _REGION_VARIANTS_CSS = """
 <style>
-  .st-key-region_dist_top_n [data-testid="stNumberInput"] { display: flex; align-items: center; gap: 8px; }
-  .st-key-region_dist_top_n label { margin: 0; width: auto; }
   .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] {
-    width: auto; height: auto; gap: 4px; align-items: center; background: transparent; border: none;
+    width: auto; height: auto; gap: 4px; align-items: center; background: transparent; border: none; overflow: visible;
   }
   .st-key-region_dist_top_n [data-testid="stNumberInputContainer"] > div { display: contents; }
   .st-key-region_dist_top_n input, .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] {
@@ -80,7 +79,7 @@ _REGION_VARIANTS_CSS = """
 </style>
 """
 
-_OCCURRENCE_VIEWS = {"table": "Table of all occurrences", "by_variant": "Sentences by DIT variant"}
+_OCCURRENCE_VIEWS = {"table": "All occurrences", "by_variant": "By DIT variant"}
 
 _SHOW_OPTIONS = {
     SHOW_ALL: "All",
@@ -200,7 +199,7 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    col_rank, _ = st.columns(2)
+    col_rank, *_ = control_row()
     with col_rank:
         rank_by = st.selectbox(
             "Select variants by",
@@ -240,7 +239,7 @@ def render_regional_distribution(ctx: WordContext) -> None:
     # `dialect_region` is categorical; make it a plain string so the share division below works.
     counts["dialect_region"] = counts["dialect_region"].astype(str)
 
-    col_values, col_top_n = st.columns(2)
+    col_values, col_top_n, _ = control_row()
     with col_values:
         normalize = st.radio(
             "Values",
@@ -331,28 +330,34 @@ def render_regional_distribution(ctx: WordContext) -> None:
 
 def render_example_sentences(ctx: WordContext) -> None:
     """Occurrences tab: a filterable table of every occurrence, or the sentences grouped by DIT variant."""
-    view = st.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get, horizontal=True,
-                    key="occurrence_view", label_visibility="collapsed", persist_state="session")
+    col_view, *free_slots = control_row()
+    view = col_view.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get,
+                          horizontal=True, key="occurrence_view", persist_state="session",
+                          help="All occurrences as one filterable table, or the sentences grouped by what "
+                               "Whisper (DIT) wrote for the word.")
     if view == "table":
-        _render_occurrence_table(ctx)
+        _render_occurrence_table(ctx, free_slots)
     else:
-        _render_sentences_by_variant(ctx)
+        _render_sentences_by_variant(ctx, free_slots)
 
 
-def _render_occurrence_table(ctx: WordContext) -> None:
-    """Every occurrence of the word with its DIT and DAT transcription; selecting a row shows its details."""
+def _render_occurrence_table(ctx: WordContext, slots: list) -> None:
+    """Every occurrence of the word with its DIT and DAT transcription; selecting a row shows its details.
+
+    `slots` are the free places in the control row next to the view choice.
+    """
     table = build_occurrence_table(ctx.word_rows, ctx.word)
     # Per word, so filter values never refer to another word's transcriptions.
     key = f"occurrences_{ctx.word}"
 
-    col_search, col_show = st.columns([3, 2], vertical_alignment="bottom")
+    col_search, col_show = slots
     search = col_search.text_input(
         "Search", key=f"{key}_search", persist_state="session", placeholder="Word or sentence text…",
         help="Case-insensitive; matches the reference sentence, both transcripts and both transcribed words.",
     )
     show = col_show.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
                           key=f"{key}_show", persist_state="session")
-    col_dit, col_dat, col_region = st.columns(3)
+    col_dit, col_dat, col_region = control_row()
     dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),
                                     key=f"{key}_dit", persist_state="session", placeholder="All",
                                     help="Most frequent first.")
@@ -392,10 +397,11 @@ def _render_occurrence_table(ctx: WordContext) -> None:
     _render_sentence_details(row, sentence_rows, ctx.word, ctx.dataset)
 
 
-def _render_sentences_by_variant(ctx: WordContext) -> None:
+def _render_sentences_by_variant(ctx: WordContext, slots: list) -> None:
     """Sentences grouped by DIT hypothesis (TF-IDF desc).
     Two-level pagination: outer pager selects which variants to show; inner shows sentences.
-    Matches and deletions sort to the bottom (TF-IDF = 0).
+    Matches and deletions sort to the bottom (TF-IDF = 0). The variant pager goes into the first of `slots`,
+    the free places in the control row next to the view choice.
     """
     df_view, word_rows, word = ctx.sentence_rows, ctx.word_rows, ctx.word
     selected_regions, include_preterite, dataset = ctx.regions, ctx.include_preterite, ctx.dataset
@@ -438,15 +444,15 @@ def _render_sentences_by_variant(ctx: WordContext) -> None:
     variant_page_size = 10
     n_variant_pages = max(1, (len(variant_order) + variant_page_size - 1) // variant_page_size)
     if n_variant_pages > 1:
-        variant_page = st.selectbox(
-            "Variant page",
+        variant_page = slots[0].selectbox(
+            "Variants",
             options=list(range(1, n_variant_pages + 1)),
             format_func=lambda p, n=n_variant_pages, total=len(variant_order): (
                 f"Page {p} of {n} (variants {(p - 1) * variant_page_size + 1}"
                 f"–{min(p * variant_page_size, total)})"
             ),
             key=f"variant_page_{word}",
-            label_visibility="collapsed",
+            help="Ten DIT variants per page, most region-typical first.",
         )
     else:
         variant_page = 1
@@ -471,14 +477,14 @@ def _render_sentences_by_variant(ctx: WordContext) -> None:
         with st.expander(f"**DIT: `{variant}`** ({n_variant})", expanded=True):
             n_pages = max(1, (n_variant + page_size - 1) // page_size)
             if n_pages > 1:
-                page = st.selectbox(
-                    "Page",
+                col_page, *_ = control_row()
+                page = col_page.selectbox(
+                    "Sentences",
                     options=list(range(1, n_pages + 1)),
                     format_func=lambda p, n=n_pages, r=n_variant: (
                         f"Page {p} of {n} (sentences {(p - 1) * page_size + 1}–{min(p * page_size, r)})"
                     ),
                     key=f"page_{word}_{variant_idx}",
-                    label_visibility="collapsed",
                 )
             else:
                 page = 1
