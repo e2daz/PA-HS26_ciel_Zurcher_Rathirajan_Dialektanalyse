@@ -15,14 +15,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
-from _layout import tab_header  # noqa: E402
+from _layout import control_row, tab_header  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
 EXAMPLE_WORDS = {
     # Lexical: the dialect uses a different word with the same meaning, which Whisper transcribes
     # literally (krankenhaus -> spital, sprechen -> reden, deshalb -> darum, zuvor -> vorher).
-    "Lexical (different word)": [
+    "Lexical": [
         "fahrrad", "krankenhaus", "arbeiten", "hause", "sprechen",
         "junge", "deshalb", "nun", "selbst", "zuvor",
     ],
@@ -30,7 +30,7 @@ EXAMPLE_WORDS = {
     # sound-alike word rather than a dialect spelling. Strongly regional: lösung -> lesung
     # (Wallis 58 %, elsewhere <= 4 %), abend -> oben (Basel 28 %), haben -> habt (Wallis, Bern).
     # Broader: denn -> dann, wann -> wenn, darin -> drin.
-    "Phonetic (sound-alike word)": [
+    "Phonetic": [
         "lösung", "abend", "haben", "denn", "wann", "darin",
     ],
 }
@@ -73,8 +73,10 @@ def _open_clicked_pair(known_words: pd.Index) -> None:
 
 def render_example_words(ref_counts: pd.Series) -> None:
     """Example-type choice and the example chips it offers, plus the user's own additions."""
+    st.subheader("Example words")
     # Let the user pick which kind of variation the example words should illustrate (DIAL-25).
-    example_type = st.radio(
+    col_type, *_ = control_row()
+    example_type = col_type.radio(
         "Example type",
         options=list(EXAMPLE_WORDS),
         horizontal=True,
@@ -93,7 +95,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
     col_examples, col_add = st.columns([5, 1], vertical_alignment="bottom")
     with col_examples:
         st.pills(
-            "Or pick an example word",
+            "Pick an example word",
             options=example_words,
             key="example_word_pill",
             on_change=_select_example_word,
@@ -101,7 +103,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
             help="Predefined reference words for the selected example type. Add your own with the button on the right.",
         )
     with col_add:
-        with st.popover("+ Add"):
+        with st.popover("+ Add word"):
             st.multiselect(
                 "Your example words",
                 options=ref_counts.index.tolist(),
@@ -114,12 +116,16 @@ def render_example_words(ref_counts: pd.Series) -> None:
 
 def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preterite: bool, dataset: str) -> None:
     """Word cloud of regionally distinctive pairs, as a way to discover interesting words."""
-    mode_label = st.radio(
+    st.subheader("Regionally typical word pairs")
+    col_mode, *_ = control_row()
+    mode_label = col_mode.radio(
         "Compare",
-        options=["Reference → DIT (Whisper)", "DAT (FHNW) → DIT (Whisper)"],
+        options=["Reference → DIT", "DAT → DIT"],
         horizontal=True,
         key="cloud_mode",
         persist_state="session",
+        help="Which two transcripts form the pairs: the reference against Whisper (DIT), or the FHNW model "
+             "(DAT) against Whisper.",
     )
     mode: CloudMode = "ref_dit" if mode_label.startswith("Reference") else "dat_dit"
 
