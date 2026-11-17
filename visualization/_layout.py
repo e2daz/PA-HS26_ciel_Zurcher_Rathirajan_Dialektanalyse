@@ -6,8 +6,11 @@ CONTROL_COLUMNS = 3
 
 
 def control_row() -> list:
-    """One row of equally wide control slots; a row with fewer controls leaves the remaining slots empty."""
-    return st.columns(CONTROL_COLUMNS, gap="medium", vertical_alignment="bottom")
+    """One row of equally wide control slots; a row with fewer controls leaves the remaining slots empty.
+
+    Aligned at the top, so the labels of a row sit on one line even when the controls differ in height.
+    """
+    return st.columns(CONTROL_COLUMNS, gap="medium", vertical_alignment="top")
 
 
 def tab_header(word: str, description: str) -> None:
