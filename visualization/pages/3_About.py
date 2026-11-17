@@ -39,7 +39,7 @@ Use the **Dataset** selector in the sidebar to switch between them.
 
 ### Pages
 
-- **Dialect Word Lexicon**: search any Standard German reference word and see its dialect variants from both
+- **Dialect Word Analysis**: search any Standard German reference word and see its dialect variants from both
   DIT and DAT. Inspect each clip's hypotheses with word-level alignments.
 - **Regional Distance**: which Swiss German dialect is most distant from Standard German?
 """

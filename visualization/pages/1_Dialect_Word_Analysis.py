@@ -1,5 +1,5 @@
 """
-Dialect Word Lexicon: the app's start page.
+Dialect Word Analysis: the app's start page.
 
 Word selection first (search, example words, word cloud). Choosing a word opens its analysis tabs.
 
@@ -167,7 +167,7 @@ if analysis_open:
     col_back, col_word = st.columns([1, 3], vertical_alignment="bottom")
     col_back.button("← Back to word selection", on_click=_clear_word, width="stretch")
 else:
-    st.title("Dialect Word Lexicon")
+    st.title("Dialect Word Analysis")
     col_word, col_examples = st.columns([2, 3])
 
 selected_word = col_word.selectbox(

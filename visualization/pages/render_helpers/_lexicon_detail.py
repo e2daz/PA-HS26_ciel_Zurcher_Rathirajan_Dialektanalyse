@@ -1,4 +1,4 @@
-"""Detail view for the Dialect Word Lexicon page."""
+"""Detail view for the Dialect Word Analysis page."""
 import html
 import io
 import sys

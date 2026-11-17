@@ -228,7 +228,7 @@ def load_region_alignments_and_metadata(regions: tuple[str, ...], dataset: str,
     return df[df["dialect_region"].isin(regions)].reset_index(drop=True)
 
 
-# --- Dialect Word Lexicon page ---
+# --- Dialect Word Analysis page ---
 
 @st.cache_data
 def tfidf_matrix_pairs(include_preterite: bool, mode: CloudMode, dataset: str) -> TfidfResult:

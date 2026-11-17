@@ -1,4 +1,4 @@
-"""D3 renderer for the Dialect Word Lexicon Levenshtein ring graph."""
+"""D3 renderer for the Dialect Word Analysis Levenshtein ring graph."""
 import json
 from functools import cache
 from pathlib import Path

@@ -14,7 +14,7 @@ st.markdown("<style>[data-testid='stMainBlockContainer'] { padding-top: 3rem; }<
 
 about = st.Page("pages/3_About.py", title="About")
 page = st.navigation([
-    st.Page("pages/1_Dialect_Word_Lexicon.py", title="Dialect Word Lexicon", default=True),
+    st.Page("pages/1_Dialect_Word_Analysis.py", title="Dialect Word Analysis", default=True),
     st.Page("pages/2_Regional_Distance.py", title="Regional Distance"),
     about,
 ])
