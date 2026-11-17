@@ -26,12 +26,14 @@ _DARK = {
 # Not part of the f-string below, so the CSS braces stay single; colours arrive as CSS variables.
 _CONTROL_STYLE = """
 <style>
+  /* No default page margin, so the toolbar lines up with the Streamlit controls outside the frame. */
+  body { margin: 0; }
   #ring-graph button, #ring-graph input, #ring-graph summary {
     background: var(--control-bg); color: var(--control-text); border: 1px solid var(--control-border);
     border-radius: 4px; padding: 3px 9px; font: inherit;
   }
   #ring-graph { font-size: 14px; }
-  #ring-graph .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 8px; }
+  #ring-graph .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; margin-bottom: 8px; }
   #ring-graph button { cursor: pointer; }
   #ring-graph button:disabled { opacity: 0.45; cursor: default; }
   #ring-graph summary { cursor: pointer; }
@@ -42,8 +44,9 @@ _CONTROL_STYLE = """
     border-radius: 4px; box-shadow: 0 2px 6px #0003;
   }
   #ring-graph #hidden-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  #ring-graph .stepper { display: flex; align-items: center; gap: 4px; }
-  #ring-graph .stepper span { margin-right: 4px; }
+  /* Label above "− n +", like the Streamlit controls above the graph. */
+  #ring-graph .stepper { display: grid; grid-template-columns: auto auto 1fr; gap: 4px; justify-items: start; }
+  #ring-graph .stepper span { grid-column: 1 / -1; margin-bottom: 4px; }
   #ring-graph .stepper input { width: 3.2em; text-align: center; appearance: textfield; -moz-appearance: textfield; }
   #ring-graph .stepper input::-webkit-outer-spin-button,
   #ring-graph .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
