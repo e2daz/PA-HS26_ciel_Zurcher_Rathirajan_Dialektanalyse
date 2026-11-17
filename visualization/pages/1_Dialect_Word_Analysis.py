@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
+from _layout import tab_header  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
@@ -34,12 +35,16 @@ EXAMPLE_WORDS = {
     ],
 }
 
-# One entry per tab; a new analysis only needs a render function taking a WordContext.
+# One entry per tab: a render function taking a WordContext and one sentence on what the tab shows.
 ANALYSIS_VIEWS = {
-    "Overview": detail.render_overview,
-    "Levenshtein": detail.render_levenshtein_graph,
-    "Regions": detail.render_regional_distribution,
-    "Occurrences": detail.render_example_sentences,
+    "Overview": (detail.render_overview,
+                 "Which words Whisper (DIT) and the FHNW model (DAT) wrote for this word, and how often."),
+    "Levenshtein": (detail.render_levenshtein_graph,
+                    "Whisper's variants of this word, arranged by how many letters they differ from it."),
+    "Regions": (detail.render_regional_distribution,
+                "In which dialect regions Whisper writes which variant of this word."),
+    "Occurrences": (detail.render_example_sentences,
+                    "Every occurrence of this word, with both transcripts, the audio and the word alignment."),
 }
 
 WORD_KEY = "selected_word"
@@ -137,9 +142,10 @@ def render_analysis(word: str, regions: list[str], include_preterite: bool, data
     ctx = detail.WordContext(word, word_rows, sentence_rows, regions, include_preterite, dataset)
 
     tabs = st.tabs(list(ANALYSIS_VIEWS), key="analysis_tab", on_change="rerun", bind="query-params")
-    for tab, render_view in zip(tabs, ANALYSIS_VIEWS.values()):
+    for tab, (render_view, description) in zip(tabs, ANALYSIS_VIEWS.values()):
         if tab.open:
             with tab:
+                tab_header(word, description)
                 render_view(ctx)
 
 
