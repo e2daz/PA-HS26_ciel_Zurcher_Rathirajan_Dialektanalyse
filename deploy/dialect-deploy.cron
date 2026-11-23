@@ -1,0 +1,4 @@
+# Polls origin/main every minute and deploys new commits.
+# Copy to /etc/cron.d/dialect-deploy (root-owned, mode 644). See deploy/DEPLOY.md.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+* * * * * root /usr/local/sbin/dialect-deploy >> /var/log/dialect-deploy.log 2>&1
