@@ -69,6 +69,27 @@ SEARCH_BOX = {
 }
 
 
+# The (search side, word) last written to the URL, to tell a URL changed by Back/Forward from one the page wrote.
+_URL_STATE_KEY = "_search_in_url"
+
+
+def _search_from_url() -> tuple[SearchSide, str]:
+    """The search side ("DIT" or "Reference", any case; reference if missing or unknown) and word in the URL."""
+    value = st.query_params.get(SEARCH_SIDE_KEY, "").casefold()
+    side = next((side for side, label in SEARCH_SIDES.items() if value in (side, label.casefold())), "reference")
+    return side, st.query_params.get(WORD_KEY, "")
+
+
+def _write_search_to_url(side: SearchSide, word: str) -> None:
+    """Put the search side and word into the URL in one update, so the browser gets one history entry."""
+    params = {k: v for k, v in st.query_params.to_dict().items() if k not in (SEARCH_SIDE_KEY, WORD_KEY)}
+    if side != "reference":  # the default side stays out of the URL
+        params[SEARCH_SIDE_KEY] = SEARCH_SIDES[side]
+    if word:
+        params[WORD_KEY] = word
+    st.query_params.from_dict(params)
+
+
 def _clear_word() -> None:
     st.session_state[WORD_KEY] = ""
 
@@ -207,18 +228,22 @@ selected_regions = render_region_filter()
 # The word search sits at the top of the sidebar, above the filters, so the analysis tabs can start at the
 # top of the page. It runs after the filters because its options depend on them.
 word_slot = _filters.word_slot()
+# The search side and word are synced with the URL by hand rather than with bind="query-params": opening a word
+# from an Overview table changes both at once, and two bound widgets would leave two browser history entries,
+# so Back would need two clicks. A URL that changed from outside (page load, Back/Forward) wins; otherwise the
+# widgets do and the URL follows below the search box.
+url_state = _search_from_url()
+if st.session_state.get(_URL_STATE_KEY) != url_state:
+    st.session_state[SEARCH_SIDE_KEY], st.session_state[WORD_KEY] = url_state
 search_side: SearchSide = word_slot.radio(
     "Search by",
     options=list(SEARCH_SIDES),
     format_func=SEARCH_SIDES.get,
     horizontal=True,
     key=SEARCH_SIDE_KEY,
-    bind="query-params",
     help="Reference = a word of the reference sentence, to see what Whisper (DIT) and DAT wrote for it. "
          "DIT = a word Whisper wrote, to see which reference words it was written for.",
 )
-if search_side not in SEARCH_SIDES:  # e.g. a hand-edited URL
-    search_side = "reference"
 
 with st.spinner("Loading alignment data..."):
     # Cached per (dataset, regions, preterite, side): word frequencies + sidebar counts.
@@ -238,19 +263,19 @@ if previous_word and previous_word not in word_counts.index:
         else f"**{previous_word}** has no data with the current filters."
     )
 
-# On a fresh page load, a word from the URL isn't in the session state until the search box renders.
-requested_word = st.session_state.get(WORD_KEY, st.query_params.get(WORD_KEY, ""))
-analysis_open = requested_word in word_counts.index
+analysis_open = st.session_state.get(WORD_KEY, "") in word_counts.index
 
 search_label, search_help = SEARCH_BOX[search_side]
 selected_word = word_slot.selectbox(
     search_label,
     options=[""] + word_counts.index.tolist(),
     key=WORD_KEY,
-    bind="query-params",
     placeholder="Type a word…",
     help=search_help,
 )
+if (search_side, selected_word) != url_state:
+    _write_search_to_url(search_side, selected_word)
+st.session_state[_URL_STATE_KEY] = (search_side, selected_word)
 if analysis_open:
     word_slot.button("← Back to word selection", on_click=_clear_word, width="stretch",
                       help="Close this word's analysis and return to the example words and the word cloud.")
