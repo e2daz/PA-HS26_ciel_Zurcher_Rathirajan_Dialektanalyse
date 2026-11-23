@@ -51,6 +51,8 @@ class DatasetConfig:
 
 
 CloudMode = Literal["ref_dit", "dat_dit"]
+# Which transcript the searched word comes from: a reference word, or a word Whisper (DIT) wrote (DIAL-35).
+SearchSide = Literal["reference", "dit"]
 
 ALIGN_DIR = PROJECT_ROOT / "experiments" / "analysis"
 
@@ -289,25 +291,60 @@ def pair_region_counts(dataset: str, regions: tuple[str, ...], include_preterite
 
 
 @st.cache_data
-def lexicon_search_index(dataset: str, regions: tuple[str, ...], include_preterite: bool):
-    """Page-1 search aggregates: ref-word frequency table and sidebar metric counts, cached per filter combo."""
+def lexicon_search_index(dataset: str, regions: tuple[str, ...], include_preterite: bool,
+                         side: SearchSide = "reference"):
+    """Page-1 search aggregates, cached per filter combo: the searchable words with their frequency, most
+    frequent first, and the sidebar metric counts.
+
+    side="reference" searches the reference words, side="dit" the words Whisper (DIT) wrote.
+    """
     alignments = load_region_alignments_and_metadata(regions, dataset, include_dat_dit=False)
     alignments = filter_preterite(alignments, include_preterite)
 
-    ref_counts = (
-        alignments[alignments["reference_word"].notna()]
-        .groupby("reference_word").size().sort_values(ascending=False)
-    )
-    return ref_counts, int(len(alignments)), int(alignments["path"].nunique())
+    if side == "reference":
+        words = alignments["reference_word"].dropna()
+    elif side == "dit":
+        words = alignments.loc[alignments["model"] == "dialect-ignorant", "hypothesis_word"].dropna()
+    else:
+        raise ValueError(f"Unknown search side: {side}")
+    word_counts = words.groupby(words).size().sort_values(ascending=False)
+    return word_counts, int(len(alignments)), int(alignments["path"].nunique())
+
+
+def _is_searched_word(alignments: pd.DataFrame, word: str, side: SearchSide) -> pd.Series:
+    """Alignments that anchor an occurrence of `word`: REF -> DIT/DAT for a reference word, REF -> DIT for a
+    DIT word (the DAT -> DIT row of the same DIT token is picked up by `word_alignments`)."""
+    if side == "reference":
+        return (alignments["reference_word"] == word) & (alignments["model"] != "dat-dit")
+    if side == "dit":
+        return (alignments["hypothesis_word"] == word) & (alignments["model"] == "dialect-ignorant")
+    raise ValueError(f"Unknown search side: {side}")
 
 
 @st.cache_data(max_entries=32)
-def word_sentence_alignments(word: str, regions: tuple[str, ...], dataset: str, include_preterite: bool) -> pd.DataFrame:
+def word_sentence_alignments(word: str, regions: tuple[str, ...], dataset: str, include_preterite: bool,
+                             side: SearchSide = "reference") -> pd.DataFrame:
     """Every alignment of the sentences containing `word`, so switching analysis tabs doesn't copy the full table."""
     alignments = filter_preterite(load_region_alignments_and_metadata(regions, dataset, include_dat_dit=True),
                                   include_preterite)
-    is_word = (alignments["reference_word"] == word) & (alignments["model"] != "dat-dit")
+    is_word = _is_searched_word(alignments, word, side)
     return alignments[alignments["path"].isin(alignments.loc[is_word, "path"].unique())].reset_index(drop=True)
+
+
+def word_alignments(sentence_rows: pd.DataFrame, word: str, side: SearchSide) -> pd.DataFrame:
+    """The alignments of `word` itself, out of `word_sentence_alignments`.
+
+    side="reference": the REF -> DIT and REF -> DAT rows whose reference word is `word`.
+    side="dit": the REF -> DIT and DAT -> DIT rows whose DIT word is `word`. Both carry the DIT token's
+    `hypothesis_index`, so one DIT occurrence can be paired with its reference word and its DAT word; a DIT
+    word with no reference or DAT word aligned to it (an insertion) has no `reference_word` there.
+    """
+    if side == "reference":
+        return sentence_rows[_is_searched_word(sentence_rows, word, side)]
+    if side == "dit":
+        return sentence_rows[(sentence_rows["hypothesis_word"] == word)
+                             & sentence_rows["model"].isin(["dialect-ignorant", "dat-dit"])]
+    raise ValueError(f"Unknown search side: {side}")
 
 
 @st.cache_data

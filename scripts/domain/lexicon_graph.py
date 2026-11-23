@@ -1,4 +1,4 @@
-"""Data preparation for interactive reference-word lexicon graphs."""
+"""Data preparation for interactive lexicon graphs around a searched word (reference or DIT word)."""
 
 from collections.abc import Iterable
 from itertools import combinations
@@ -79,8 +79,16 @@ def build_levenshtein_ring_graph(
     rank_by: RankBy = "tfidf",
     tfidf_by_hypothesis: dict[str, float] | None = None,
     max_edge_distance: int | None = None,
+    variant_column: str = "hypothesis_word",
+    center_label: str = "Reference",
+    variant_label: str = "DIT variants",
 ) -> dict[str, Any]:
-    """Build a JSON-serializable ring graph from reference-word alignments.
+    """Build a JSON-serializable ring graph from the alignments of a searched word.
+
+    `reference_word` is the word in the centre; the words around it are taken from `variant_column`. For a
+    reference word that is `hypothesis_word` (what DIT wrote for it); for a DIT word it is `reference_word`
+    (which reference words DIT wrote it for). `tfidf_by_hypothesis` is keyed by those variant words.
+    `center_label` and `variant_label` name the centre and the variants in the graph's texts.
 
     Candidates are ranked by `rank_by` ("tfidf", "count" = alignment occurrences,
     or "similarity" = mean alignment similarity to the reference); a secondary
@@ -90,7 +98,7 @@ def build_levenshtein_ring_graph(
     Pairwise edges grow quadratically with `top_n`; pass `max_edge_distance` to
     drop distant pairs server-side when rendering larger word sets.
     """
-    required = {"hypothesis_word", "similarity"}
+    required = {variant_column, "similarity"}
     missing = required.difference(rows.columns)
     if missing:
         raise ValueError(f"rows is missing required columns: {sorted(missing)}")
@@ -101,8 +109,8 @@ def build_levenshtein_ring_graph(
     if max_edge_distance is not None and max_edge_distance <= 0:
         raise ValueError(f"max_edge_distance must be positive; got {max_edge_distance}")
 
-    candidates = rows.dropna(subset=["hypothesis_word"]).copy()
-    candidates = candidates[candidates["hypothesis_word"] != reference_word]
+    candidates = rows.dropna(subset=[variant_column]).rename(columns={variant_column: "_variant"})
+    candidates = candidates[candidates["_variant"] != reference_word]
     if candidates.empty:
         return {
             "reference": reference_word,
@@ -120,27 +128,29 @@ def build_levenshtein_ring_graph(
             "shown_count": 0,
             "candidate_count": 0,
             "rank_by": rank_by,
+            "center_label": center_label,
+            "variant_label": variant_label,
         }
 
     grouped = (
-        candidates.groupby("hypothesis_word", sort=False)
-        .agg(count=("hypothesis_word", "size"), mean_similarity=("similarity", "mean"))
+        candidates.groupby("_variant", sort=False)
+        .agg(count=("_variant", "size"), mean_similarity=("similarity", "mean"))
         .reset_index()
     )
     tfidf = tfidf_by_hypothesis or {}
-    grouped["tfidf"] = grouped["hypothesis_word"].map(tfidf).fillna(0.0)
+    grouped["tfidf"] = grouped["_variant"].map(tfidf).fillna(0.0)
     candidate_count = len(grouped)
     grouped = grouped.sort_values(
-        [*_RANK_KEYS[rank_by], "hypothesis_word"],
+        [*_RANK_KEYS[rank_by], "_variant"],
         ascending=[False] * len(_RANK_KEYS[rank_by]) + [True],
         kind="mergesort",
     ).head(top_n)
 
-    words = grouped["hypothesis_word"].tolist()
+    words = grouped["_variant"].tolist()
     region_counts = {}
     if "dialect_region" in candidates.columns:
         region_counts = (
-            candidates.groupby(["hypothesis_word", "dialect_region"], observed=True)
+            candidates.groupby(["_variant", "dialect_region"], observed=True)
             .size()
             .unstack(fill_value=0)
             .to_dict(orient="index")
@@ -153,7 +163,7 @@ def build_levenshtein_ring_graph(
         "distance": 0,
     }]
     for row in grouped.to_dict("records"):
-        word = str(row["hypothesis_word"])
+        word = str(row["_variant"])
         nodes.append({
             "id": f"hypothesis:{word}",
             "label": word,
@@ -191,4 +201,6 @@ def build_levenshtein_ring_graph(
         "shown_count": len(grouped),
         "candidate_count": candidate_count,
         "rank_by": rank_by,
+        "center_label": center_label,
+        "variant_label": variant_label,
     }

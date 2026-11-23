@@ -10,8 +10,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "domain"))
 
 from occurrence_table import (  # noqa: E402
-    DELETION, DELETION_LABEL, EXACT_MATCH, SHOW_DIT_DIFFERS, SHOW_MODELS_DIFFER, VARIANT,
-    build_occurrence_table, filter_occurrences, words_by_frequency,
+    DELETION, DELETION_LABEL, EXACT_MATCH, INSERTION, INSERTION_LABEL, SHOW_DIT_DIFFERS, SHOW_MODELS_DIFFER,
+    VARIANT, build_occurrence_table, filter_occurrences, words_by_frequency,
 )
 
 
@@ -87,6 +87,54 @@ class TestFilterOccurrences(unittest.TestCase):
     def test_words_by_frequency(self):
         self.assertEqual(words_by_frequency(self.table, "dat_word"), ["nicht", "nid"])
         self.assertEqual(words_by_frequency(self.table, "dit_word"), [DELETION_LABEL, "nicht", "nid"])
+
+
+def _dit_alignment(path, hyp_index, model, source, similarity, region="ZH"):
+    """An alignment whose DIT word is "jetzt"; `source` is the reference word (REF -> DIT) or the DAT word
+    (DAT -> DIT) aligned to it, None for an insertion."""
+    return {
+        "dataset": "STT4SG-350", "path": path, "hypothesis_index": hyp_index, "model": model,
+        "reference_index": None if source is None else hyp_index,
+        "reference_word": source, "hypothesis_word": "jetzt", "similarity": similarity,
+        "dialect_region": region, "gender": "f", "age": "30-39", "reference": f"ref {path}",
+        "dit_hypothesis": f"dit {path}", "dat_hypothesis": f"dat {path}",
+    }
+
+
+def _dit_word_rows():
+    return pd.DataFrame([
+        _dit_alignment("a", 0, "dialect-ignorant", "nun", 0.4),
+        _dit_alignment("a", 0, "dat-dit", "jetz", 0.8),
+        _dit_alignment("b", 3, "dialect-ignorant", "jetzt", 1.0, region="BE"),
+        _dit_alignment("b", 3, "dat-dit", "jetzt", 1.0, region="BE"),
+        # DIT wrote "jetzt" where neither the reference nor DAT has a word.
+        _dit_alignment("c", 1, "dialect-ignorant", None, 0.0),
+        _dit_alignment("c", 1, "dat-dit", None, 0.0),
+    ])
+
+
+class TestDitAnchoredOccurrences(unittest.TestCase):
+    def setUp(self):
+        self.table = build_occurrence_table(_dit_word_rows(), "jetzt", anchor="dit")
+
+    def test_one_row_per_dit_token_with_reference_and_dat(self):
+        self.assertEqual(self.table[["path", "hypothesis_index"]].values.tolist(), [["a", 0], ["b", 3], ["c", 1]])
+        self.assertEqual(self.table["ref_word"].tolist(), ["nun", "jetzt", INSERTION_LABEL])
+        self.assertEqual(self.table["dat_word"].tolist(), ["jetz", "jetzt", INSERTION_LABEL])
+        self.assertEqual(self.table["dit_word"].tolist(), ["jetzt"] * 3)
+        self.assertEqual(self.table["ref_result"].tolist(), [VARIANT, EXACT_MATCH, INSERTION])
+        self.assertEqual(self.table["ref_similarity"].tolist(), [0.4, 1.0, 0.0])
+        self.assertEqual(self.table["dialect_region"].tolist(), ["ZH", "BE", "ZH"])
+
+    def test_filters_work_on_the_dit_table(self):
+        self.assertEqual(filter_occurrences(self.table, ref_words=["nun"])["path"].tolist(), ["a"])
+        self.assertEqual(filter_occurrences(self.table, show=SHOW_DIT_DIFFERS)["path"].tolist(), ["a", "c"])
+        self.assertEqual(filter_occurrences(self.table, show=SHOW_MODELS_DIFFER)["path"].tolist(), ["a", "c"])
+        self.assertEqual(filter_occurrences(self.table, search="NUN")["path"].tolist(), ["a"])
+
+    def test_unknown_anchor_raises(self):
+        with self.assertRaises(ValueError):
+            build_occurrence_table(_dit_word_rows(), "jetzt", anchor="dat")
 
 
 if __name__ == "__main__":
