@@ -38,6 +38,18 @@ def clean_word(word: str) -> str:
     return re.sub(r"[^a-z0-9äöü]", "", word)
 
 
+def spell_out_percent(text: str) -> str:
+    """Write a percent sign as the word "Prozent", the way DAT and the reference sentences do.
+
+    Whisper (DIT) writes "51%" where DAT writes "51 Prozent", so the transcripts read
+    differently side by side. "51%" and "51 %" become "51 Prozent"; a compound such as
+    "50%-Stelle" becomes "50-Prozent-Stelle". Text without "%" is returned unchanged.
+    """
+    text = re.sub(r"%-", "-Prozent-", text)
+    text = re.sub(r"(\d)\s*%", r"\1 Prozent", text)
+    return text.replace("%", " Prozent")
+
+
 def tokenize(text: str) -> list[str]:
     """Split a sentence on whitespace and clean each token, dropping empty results.
 

@@ -7,7 +7,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "scripts" / "domain"))
 
-from preprocessing import clean_word, tokenize
+from preprocessing import clean_word, spell_out_percent, tokenize
 
 
 class TestCleanWordBasics(unittest.TestCase):
@@ -142,6 +142,29 @@ class TestTokenizePercent(unittest.TestCase):
 
     def test_text_without_percent_unchanged(self):
         self.assertEqual(tokenize("Er kam um 6 Uhr."), ["er", "kam", "um", "6", "uhr"])
+
+
+class TestSpellOutPercent(unittest.TestCase):
+    """DIT writes "51%", DAT writes "51 Prozent"; the DIT transcripts are rewritten to match (DIAL-32)."""
+
+    def test_glued_and_spaced_percent(self):
+        self.assertEqual(spell_out_percent("arbeiten 51% im Staat."), "arbeiten 51 Prozent im Staat.")
+        self.assertEqual(spell_out_percent("um 6 % gestiegen"), "um 6 Prozent gestiegen")
+
+    def test_decimal_percent_at_sentence_end(self):
+        self.assertEqual(spell_out_percent("um 2,5%."), "um 2,5 Prozent.")
+
+    def test_compound(self):
+        self.assertEqual(spell_out_percent("eine 50%-Stelle"), "eine 50-Prozent-Stelle")
+
+    def test_text_without_percent_unchanged(self):
+        text = "Noch immer arbeiten die wenigsten Mütter 100 Prozent."
+        self.assertEqual(spell_out_percent(text), text)
+
+    def test_tokens_unchanged_for_plain_percent(self):
+        # The alignments are built from tokens, which already split "51%" into "51 prozent".
+        text = "Auch in Basel arbeiten 80% der Lehrkräfte Teilzeit."
+        self.assertEqual(tokenize(spell_out_percent(text)), tokenize(text))
 
 
 if __name__ == "__main__":
