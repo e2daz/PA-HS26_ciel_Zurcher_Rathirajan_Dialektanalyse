@@ -88,6 +88,12 @@ _GRAPH_RANK_LABELS = {
 
 _VARIANT_TABLE_HEIGHT = 350
 
+# First column of the Overview word tables: an arrow that opens the row's word (DIAL-35).
+_OPEN_COLUMN = "open"
+_OPEN_ARROW = "→"
+_OPEN_CLICKS_KEY = "_overview_open_clicks"
+_OPEN_COLUMN_CONFIG = st.column_config.TextColumn("", width=40, help="Click the arrow to open this word.")
+
 # Streamlit groups both step buttons right of the field; this matches the ring graph's "− n +" steppers.
 _REGION_VARIANTS_CSS = """
 <style>
@@ -206,15 +212,36 @@ def _reduced_graph_png(reference: str, hypothesis: str) -> bytes | None:
 
 def _word_table(table: pd.DataFrame, word_column: str, ctx: WordContext, open_side: SearchSide, key: str,
                 column_config: dict) -> None:
-    """A word table of the Overview tab; clicking a row opens its word as a `open_side` word (DIAL-35)."""
-    def open_clicked_row() -> None:
-        rows = st.session_state[key].selection.rows
-        if rows:
-            ctx.open_word(table.iloc[rows[0]][word_column], open_side)
+    """A word table of the Overview tab. Every row with a word starts with an arrow; clicking the arrow opens
+    that word as a `open_side` word (DIAL-35).
 
-    st.dataframe(table, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True, column_config=column_config,
-                 on_select=open_clicked_row if ctx.open_word is not None else "ignore",
-                 selection_mode="single-row", key=key)
+    Row selection would show a checkbox, which reads as "select this row" rather than "go to this word", so the
+    table selects single cells instead and only reacts to the arrow column.
+    """
+    if ctx.open_word is None:
+        st.dataframe(table, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+                     column_config=column_config)
+        return
+
+    # Deletion/insertion rows have no word to open (NaN, or a label in brackets such as "(inserted)").
+    openable = table[word_column].map(lambda word: isinstance(word, str) and not word.startswith("("))
+    shown = table.assign(**{_OPEN_COLUMN: openable.map({True: _OPEN_ARROW, False: ""})})
+    shown = shown[[_OPEN_COLUMN, *table.columns]]
+    # A new key after every arrow click clears the selection, so the same arrow can be clicked again later.
+    key = f"{key}_{st.session_state.get(_OPEN_CLICKS_KEY, 0)}"
+
+    def open_clicked_arrow() -> None:
+        cells = st.session_state[key].selection.cells
+        if not cells or cells[0][1] != _OPEN_COLUMN:
+            return
+        row = cells[0][0]
+        st.session_state[_OPEN_CLICKS_KEY] = st.session_state.get(_OPEN_CLICKS_KEY, 0) + 1
+        if openable.iloc[row]:
+            ctx.open_word(table.iloc[row][word_column], open_side)
+
+    st.dataframe(shown, width="stretch", height=_VARIANT_TABLE_HEIGHT, hide_index=True,
+                 column_config={_OPEN_COLUMN: _OPEN_COLUMN_CONFIG, **column_config},
+                 on_select=open_clicked_arrow, selection_mode="single-cell", key=key)
 
 
 def render_overview(ctx: WordContext) -> None:
@@ -257,8 +284,8 @@ def render_overview(ctx: WordContext) -> None:
     chart_help(
         "What each model wrote wherever the reference has this word, most frequent first. Whisper (DIT) ignores "
         "dialect, the FHNW model (DAT) knows Swiss German, so variants that only DIT has point to dialect.",
-        "Click a column header to sort. Click a DIT row to see which reference words DIT writes that word for, "
-        "or a DAT row to open it as a reference word. Hover a number or column header to see what it means.",
+        "Click a column header to sort. Click → in a DIT row to see which reference words DIT writes that word "
+        "for, or in a DAT row to open it as a reference word. Hover a number or column header to see what it means.",
     )
 
 
@@ -293,8 +320,8 @@ def _render_dit_overview(ctx: WordContext) -> None:
         "Wherever Whisper (DIT) wrote this word: which word the reference has there and which word the FHNW model "
         "(DAT) wrote, most frequent first. Several reference words behind one DIT word show that different words "
         f"sound alike in dialect. {INSERTION_LABEL} means there is no word on that side.",
-        "Click a column header to sort, and click a row to open that word as a reference word. Hover a number "
-        "or column header to see what it means.",
+        "Click a column header to sort, and click → in a row to open that word as a reference word. Hover a "
+        "number or column header to see what it means.",
     )
 
 
