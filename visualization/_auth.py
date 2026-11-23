@@ -24,7 +24,9 @@ def render_audio_gate() -> None:
         st.warning("Audio is locked: no password is configured (set `password` in `.streamlit/secrets.toml`).")
         return
     with st.form("audio_gate", clear_on_submit=True):
-        password = st.text_input("Enter the password to enable audio playback", type="password")
+        password = st.text_input("Enter the password to enable audio playback", type="password",
+                                 help="The recordings may only be played by project members. Unlocking lasts "
+                                      "for this browser session.")
         submitted = st.form_submit_button("Unlock audio")
     if submitted and hmac.compare_digest(password, expected):
         st.session_state["audio_authed"] = True

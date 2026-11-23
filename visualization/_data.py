@@ -96,7 +96,8 @@ def _configs_for(dataset: str) -> tuple[DatasetConfig, ...]:
     return (DATASETS[dataset],)
 
 
-REGIONS = ["Wallis", "Zürich", "Bern", "Basel", "Graubünden", "Innerschweiz", "Ostschweiz"]
+# Alphabetical, so the order is obvious everywhere (filters, heatmap columns) and new regions slot in naturally.
+REGIONS = sorted(["Basel", "Bern", "Graubünden", "Innerschweiz", "Ostschweiz", "Wallis", "Zürich"])
 
 # Calibrated hyperparameters: must match the ones in build_alignment_table
 ALPHA = 0.85
@@ -228,7 +229,7 @@ def load_region_alignments_and_metadata(regions: tuple[str, ...], dataset: str,
     return df[df["dialect_region"].isin(regions)].reset_index(drop=True)
 
 
-# --- Dialect Word Lexicon page ---
+# --- Dialect Word Analysis page ---
 
 @st.cache_data
 def tfidf_matrix_pairs(include_preterite: bool, mode: CloudMode, dataset: str) -> TfidfResult:

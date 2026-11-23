@@ -16,6 +16,7 @@ from _data import (  # noqa: E402
     filter_preterite, load_region_alignments_and_metadata, per_sentence_cost,
 )
 from _filters import shared_filters  # noqa: E402
+from _layout import sidebar_counts  # noqa: E402
 
 # --- Page 2 ---
 st.title("Regional Distance from Standard German")
@@ -42,8 +43,7 @@ with st.spinner("Computing per-sentence alignment costs..."):
 alignments_in_view = load_region_alignments_and_metadata(tuple(REGIONS), dataset, include_dat_dit=False)
 alignments_in_view = alignments_in_view[alignments_in_view["path"].isin(set(per_sentence["path"]))]
 
-st.sidebar.metric("Alignments", f"{len(alignments_in_view):,}")
-st.sidebar.metric("Unique sentences", f"{per_sentence['path'].nunique():,}")
+sidebar_counts(alignments=len(alignments_in_view), sentences=per_sentence["path"].nunique())
 
 regions_sorted = summary["dialect_region"].tolist()
 

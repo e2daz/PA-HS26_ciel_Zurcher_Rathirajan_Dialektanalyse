@@ -1,4 +1,5 @@
-"""D3 renderer for the Dialect Word Lexicon Levenshtein ring graph."""
+"""D3 renderer for the Dialect Word Analysis Levenshtein ring graph."""
+import html
 import json
 from functools import cache
 from pathlib import Path
@@ -26,15 +27,29 @@ _DARK = {
 # Not part of the f-string below, so the CSS braces stay single; colours arrive as CSS variables.
 _CONTROL_STYLE = """
 <style>
-  #ring-graph button, #ring-graph input, #ring-graph summary {
+  /* No default page margin, so the graph lines up with the Streamlit content outside the frame. */
+  body { margin: 0; }
+  #ring-graph { position: relative; font-size: 14px; }
+  #ring-graph button, #ring-graph input, #ring-graph select, #ring-graph summary {
     background: var(--control-bg); color: var(--control-text); border: 1px solid var(--control-border);
     border-radius: 4px; padding: 3px 9px; font: inherit;
   }
-  #ring-graph { font-size: 14px; }
-  #ring-graph .toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 8px; }
+  /* The controls float over the left of the graph, which the centred rings leave empty on wide screens. */
+  #ring-graph .controls {
+    position: absolute; top: 0; left: 0; z-index: 5; width: 250px;
+    display: flex; flex-direction: column; gap: 12px; align-items: flex-start;
+  }
+  #ring-graph .controls label { display: flex; flex-direction: column; gap: 4px; }
+  #ring-graph .button-row { display: flex; flex-wrap: wrap; gap: 6px; }
   #ring-graph button { cursor: pointer; }
   #ring-graph button:disabled { opacity: 0.45; cursor: default; }
   #ring-graph summary { cursor: pointer; }
+  /* Same look as Streamlit's (?) help icon; the text shows on hover. */
+  #ring-graph .help {
+    display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-left: 6px;
+    border: 1px solid var(--control-text); border-radius: 50%; font-size: 10px; line-height: 1; opacity: 0.6;
+    cursor: help; vertical-align: middle;
+  }
   #ring-graph #hidden-menu { position: relative; }
   #ring-graph .hidden-panel {
     position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 170px; max-height: 300px;
@@ -42,13 +57,25 @@ _CONTROL_STYLE = """
     border-radius: 4px; box-shadow: 0 2px 6px #0003;
   }
   #ring-graph #hidden-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  #ring-graph .stepper { display: flex; align-items: center; gap: 4px; }
-  #ring-graph .stepper span { margin-right: 4px; }
+  /* Label above "− n +". */
+  #ring-graph .stepper { display: grid; grid-template-columns: auto auto 1fr; gap: 4px; justify-items: start; }
+  #ring-graph .stepper span { grid-column: 1 / -1; }
   #ring-graph .stepper input { width: 3.2em; text-align: center; appearance: textfield; -moz-appearance: textfield; }
   #ring-graph .stepper input::-webkit-outer-spin-button,
   #ring-graph .stepper input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  #ring-graph svg { display: block; width: 100%; height: GRAPH_HEIGHTpx; }
+  /* Too narrow to float the controls beside the rings: put them above the graph instead. */
+  @media (max-width: 1000px) {
+    #ring-graph .controls { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: flex-end;
+                            margin-bottom: 8px; }
+  }
 </style>
 """
+
+# Height of the graph itself; small enough that the graph and its help text fit on a laptop screen.
+_GRAPH_HEIGHT = 540
+# Extra room for the controls, which sit above the graph on narrow screens.
+_FRAME_HEIGHT = _GRAPH_HEIGHT + 20
 
 
 @cache
@@ -65,61 +92,69 @@ def _to_js(value) -> str:
     return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
 
 
-def render(graph: dict, rank_label: str, dark: bool = False) -> None:
+def render(graphs: dict[str, dict], rank_labels: dict[str, str], dark: bool = False) -> None:
     """Render a concentric-ring graph in an isolated component.
 
     Nodes are held on their ring by `forceRadial`; pairwise link forces pull
     lexically close variants together along the ring. The simulation runs to
     completion before drawing, so the layout is static and deterministic.
 
-    `graph` holds every selectable variant; the iframe picks how many to show,
-    so changing the count needs no Streamlit rerun.
+    `graphs` holds one graph per ranking (keys of `rank_labels`), each with every
+    selectable variant; the iframe picks the ranking and how many variants to show,
+    so neither needs a Streamlit rerun.
     """
     colors = _DARK if dark else _LIGHT
+    rank_options = "".join(f'<option value="{key}">{html.escape(label)}</option>'
+                           for key, label in rank_labels.items())
 
     st.iframe(
         f"""
-{_CONTROL_STYLE}
+{_CONTROL_STYLE.replace("GRAPH_HEIGHT", str(_GRAPH_HEIGHT))}
 <div id="ring-graph" style="font-family: sans-serif; width: 100%; color: {colors['text']};
      --control-bg: {colors['tooltip_bg']}; --control-border: {colors['tooltip_border']}; --control-text: {colors['text']};">
-  <div class="toolbar">
+  <div class="controls">
+    <label>
+      <span>Select variants by<span class="help" title="Which DIT variants make it into the graph: highest TF-IDF (most typical for the selected regions), most alignment occurrences, or highest mean alignment similarity to the reference." aria-label="Which DIT variants make it into the graph: highest TF-IDF (most typical for the selected regions), most alignment occurrences, or highest mean alignment similarity to the reference.">?</span></span>
+      <select id="rank-by">{rank_options}</select>
+    </label>
     <div class="stepper" role="group" aria-label="Number of variants">
-      <span>Number of variants</span>
+      <span>Number of variants<span class="help" title="How many of Whisper's variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier." aria-label="How many of Whisper's variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier.">?</span></span>
       <button id="variant-count-decrease" type="button" aria-label="Decrease number of variants">−</button>
       <input id="variant-count" type="number" min="1" max="1" value="1" step="1">
       <button id="variant-count-increase" type="button" aria-label="Increase number of variants">+</button>
     </div>
     <div class="stepper" role="group" aria-label="Show edges up to distance">
-      <span>Show edges up to distance</span>
+      <span>Show edges up to distance<span class="help" title="Lines join two variants whose spellings differ by at most this many letter changes (Levenshtein distance). Lower it to keep only the closest pairs; longer lines are faded, not removed." aria-label="Lines join two variants whose spellings differ by at most this many letter changes (Levenshtein distance). Lower it to keep only the closest pairs; longer lines are faded, not removed.">?</span></span>
       <button id="edge-distance-decrease" type="button" aria-label="Decrease edge distance">−</button>
       <input id="edge-distance" type="number" min="1" max="1" value="1" step="1">
       <button id="edge-distance-increase" type="button" aria-label="Increase edge distance">+</button>
     </div>
+    <div class="button-row">
+      <button id="hide-selected" type="button" disabled title="Click a node first, then hide it to declutter the graph. Hidden variants can be shown again from the Hidden menu.">Hide selected</button>
+      <details id="hidden-menu" hidden>
+        <summary id="hidden-summary"></summary>
+        <div class="hidden-panel">
+          <button id="show-all-hidden" type="button">Show all</button>
+          <div id="hidden-list"></div>
+        </div>
+      </details>
+    </div>
+    <div class="button-row">
+      <button id="reset-layout" type="button" title="Put dragged nodes back where the layout placed them and reset the zoom.">Reset layout</button>
+      <button id="export-png" type="button" title="Save the graph as it is shown now (zoom, moved and hidden nodes) as a PNG image.">Export PNG</button>
+    </div>
+    <div id="variant-summary" style="color:{colors['muted']};"></div>
+    <div id="graph-message" style="color:{colors['muted']};"></div>
   </div>
-  <div class="toolbar">
-    <button id="hide-selected" type="button" disabled>Hide selected</button>
-    <details id="hidden-menu" hidden>
-      <summary id="hidden-summary"></summary>
-      <div class="hidden-panel">
-        <button id="show-all-hidden" type="button">Show all</button>
-        <div id="hidden-list"></div>
-      </div>
-    </details>
-    <button id="reset-layout" type="button">Reset layout</button>
-    <button id="export-png" type="button">Export PNG</button>
-  </div>
-  <div id="variant-summary" style="color:{colors['muted']};"></div>
-  <svg id="graph-svg" width="100%" height="620" viewBox="0 0 900 620"
-       role="img" aria-label="Levenshtein ring graph"></svg>
-  <div id="graph-message" style="color:{colors['muted']};"></div>
+  <svg id="graph-svg" viewBox="0 0 900 620" role="img" aria-label="Levenshtein ring graph"></svg>
 </div>
 <script>{_d3_source()}</script>
 <script>
-const graphData = {_to_js(graph)};
+const graphsByRank = {_to_js(graphs)};
+const rankLabels = {_to_js(rank_labels)};
 const colors = {_to_js(colors)};
-const rankLabel = {_to_js(rank_label)};
 </script>
 <script>{_graph_script()}</script>
 """,
-        height=800,
+        height=_FRAME_HEIGHT,
     )
