@@ -14,6 +14,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
 from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
+import _filters  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
 from _layout import control_row, sidebar_counts, tab_header  # noqa: E402
 
@@ -43,7 +44,7 @@ ANALYSIS_VIEWS = {
                     "Whisper's variants of this word, arranged by how many letters they differ from it."),
     "Regions": (detail.render_regional_distribution,
                 "In which dialect regions Whisper writes which variant of this word."),
-    "Occurrences": (detail.render_example_sentences,
+    "Occurrences": (detail.render_occurrences,
                     "Every occurrence of this word, with both transcripts, the audio and the word alignment."),
 }
 
@@ -103,7 +104,7 @@ def render_example_words(ref_counts: pd.Series) -> None:
             help="Predefined reference words for the selected example type. Add your own with the button on the right.",
         )
     with col_add:
-        with st.popover("+ Add word"):
+        with st.popover("+ Add word", help="Add your own reference words to the example list."):
             st.multiselect(
                 "Your example words",
                 options=ref_counts.index.tolist(),
@@ -175,9 +176,10 @@ if previous_word and previous_word not in ref_counts.index:
 requested_word = st.session_state.get(WORD_KEY, st.query_params.get(WORD_KEY, ""))
 analysis_open = requested_word in ref_counts.index
 
-# The word search sits under the filters, so the analysis tabs can start at the top of the page.
-st.sidebar.divider()
-selected_word = st.sidebar.selectbox(
+# The word search sits at the top of the sidebar, above the filters, so the analysis tabs can start at the
+# top of the page. It runs after the filters because its options depend on them.
+word_slot = _filters.word_slot
+selected_word = word_slot.selectbox(
     "Reference word",
     options=[""] + ref_counts.index.tolist(),
     key=WORD_KEY,
@@ -186,7 +188,9 @@ selected_word = st.sidebar.selectbox(
     help="Type a Standard German word to see its dialect-specific variants.",
 )
 if analysis_open:
-    st.sidebar.button("← Back to word selection", on_click=_clear_word, width="stretch")
+    word_slot.button("← Back to word selection", on_click=_clear_word, width="stretch",
+                      help="Close this word's analysis and return to the example words and the word cloud.")
+word_slot.divider()
 
 if st.session_state.get("_prev_selected_word") != selected_word:
     for k in [k for k in st.session_state if k.startswith("audio_loaded_")]:

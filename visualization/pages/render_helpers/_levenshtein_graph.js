@@ -35,6 +35,21 @@ const hideSelected = d3.select("#hide-selected");
 const hiddenMenu = d3.select("#hidden-menu");
 const variantSummary = d3.select("#variant-summary");
 const variantCountKey = "levenshteinRing:variantCount";
+const rankByKey = "levenshteinRing:rankBy";
+const rankSelect = d3.select("#rank-by");
+// The ranking only changes the order of the variants, so switching it needs no Streamlit rerun.
+let rankBy = loadRankBy();
+let graphData = graphsByRank[rankBy];
+rankSelect.property("value", rankBy).on("change", function() {
+  rankBy = this.value;
+  graphData = graphsByRank[rankBy];
+  try {
+    sessionStorage.setItem(rankByKey, rankBy);
+  } catch {
+    // Storage can be blocked; the ranking then starts at the default next time.
+  }
+  render();
+});
 const defaultVariantCount = 10, minVariantCount = 5;
 // Each redraw reruns the layout, so wait for the user to stop clicking or typing.
 const variantRedrawDelayMs = 300;
@@ -112,6 +127,16 @@ function createStepper(id, onChange) {
   });
 
   return {set, setRange(low, high) { input.attr("min", low).attr("max", high); }};
+}
+
+function loadRankBy() {
+  let saved = null;
+  try {
+    saved = sessionStorage.getItem(rankByKey);
+  } catch {
+    // Storage can be blocked; fall back to the first ranking.
+  }
+  return saved in graphsByRank ? saved : Object.keys(graphsByRank)[0];
 }
 
 function loadVariantCount() {
@@ -288,12 +313,12 @@ function render() {
   root.selectAll("*").remove();
   if (graphData.nodes.length <= 1) {
     message.text("No hypothesis variants are available for this reference word.");
-    d3.selectAll("#ring-graph button, #ring-graph input").property("disabled", true);
+    d3.selectAll("#ring-graph button, #ring-graph input, #ring-graph select").property("disabled", true);
     return;
   }
   // The how-to text is rendered by Streamlit under the graph, like the help of every other chart.
   message.text("");
-  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabel + ".");
+  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabels[rankBy] + ".");
   nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
   // Variants arrive ranked, so the first n hypothesis nodes are the top n.
   const nodes = graphData.nodes.slice(0, variantCount + 1).map(d => ({...d}));

@@ -13,6 +13,15 @@ def control_row() -> list:
     return st.columns(CONTROL_COLUMNS, gap="medium", vertical_alignment="top")
 
 
+def control_stack():
+    """Left half of the page for an analysis tab's controls, stacked one below the other.
+
+    Use as `with control_stack():`; the chart or table below it keeps the full width.
+    """
+    column, _ = st.columns(2, gap="medium")
+    return column
+
+
 def tab_header(word: str, description: str) -> None:
     """The analysed word and one sentence on what the open tab shows."""
     st.markdown(f"### {word}")

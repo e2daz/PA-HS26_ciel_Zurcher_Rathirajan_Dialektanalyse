@@ -18,7 +18,7 @@ sys.path.insert(0, str(_REPO_ROOT / "scripts" / "utils"))
 sys.path.insert(0, str(_VIS_DIR))
 from _auth import audio_unlocked, render_audio_gate  # noqa: E402
 from _help import chart_help  # noqa: E402
-from _layout import control_row  # noqa: E402
+from _layout import control_stack  # noqa: E402
 from _data import (  # noqa: E402
     ALPHA, LAMBDA, REGIONS, USE_GLOBAL_LEXICAL_NORMALIZATION,
     USE_SQUARED_POSITIONAL, resolve_audio_path, tfidf_matrix_pairs,
@@ -76,10 +76,10 @@ _REGION_VARIANTS_CSS = """
   .st-key-region_dist_top_n input { flex: none; width: 3.2em; padding: 3px; text-align: center; }
   .st-key-region_dist_top_n button[data-testid^="stNumberInputStep"] { width: 30px; }
   .st-key-region_dist_top_n [data-testid="stNumberInputStepDown"] { order: -1; }
+  /* Streamlit pushes a number input's (?) to the far end of the field; keep it next to the label instead. */
+  .st-key-region_dist_top_n [data-testid="stWidgetLabel"] > div { flex: none; margin-left: 0.5rem; }
 </style>
 """
-
-_OCCURRENCE_VIEWS = {"table": "All occurrences", "by_variant": "By DIT variant"}
 
 _SHOW_OPTIONS = {
     SHOW_ALL: "All",
@@ -199,25 +199,18 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     lookup = _dit_tfidf_lookup(word, ctx.regions, ctx.include_preterite, ctx.dataset)
     tfidf_by_hypothesis = {hyp: lookup(hyp) for hyp in dit_rows["hypothesis_word"].dropna().unique()}
 
-    col_rank, *_ = control_row()
-    with col_rank:
-        rank_by = st.selectbox(
-            "Select variants by",
-            options=list(_GRAPH_RANK_LABELS),
-            format_func=_GRAPH_RANK_LABELS.get,
-            key="lev_graph_rank_by",
-            help="Which DIT variants make it into the graph: highest TF-IDF, most alignment "
-                 "occurrences, or highest mean alignment similarity to the reference.",
-        )
-
-    graph = build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
-                                         tfidf_by_hypothesis=tfidf_by_hypothesis)
-    _levenshtein_graph.render(graph, _GRAPH_RANK_LABELS[rank_by], dark=st.context.theme.type == "dark")
+    # One graph per ranking, so the ranking can be switched in the graph's own controls without a rerun.
+    graphs = {
+        rank_by: build_levenshtein_ring_graph(dit_rows, word, top_n=_GRAPH_MAX_VARIANTS, rank_by=rank_by,
+                                              tfidf_by_hypothesis=tfidf_by_hypothesis)
+        for rank_by in _GRAPH_RANK_LABELS
+    }
+    _levenshtein_graph.render(graphs, _GRAPH_RANK_LABELS, dark=st.context.theme.type == "dark")
     chart_help(
         "Whisper's variants of the word by spelling distance. The word is in the middle, each ring is one more "
         "letter change away (Levenshtein distance), and bigger nodes occur more often. Lines join variants that "
         "are spelled alike; solid lines are closer than dashed ones.",
-        "Pick the number of variants and the line distance above the graph. Hover for numbers, click a node to "
+        "Pick the ranking, the number of variants and the line distance in the controls on the left. Hover for numbers, click a node to "
         "highlight its lines or hide it, drag it along its ring, and use Export PNG to save the view.",
     )
 
@@ -239,8 +232,7 @@ def render_regional_distribution(ctx: WordContext) -> None:
     # `dialect_region` is categorical; make it a plain string so the share division below works.
     counts["dialect_region"] = counts["dialect_region"].astype(str)
 
-    col_values, col_top_n, _ = control_row()
-    with col_values:
+    with control_stack():
         normalize = st.radio(
             "Values",
             options=["Absolute count", "Share within region (%)"],
@@ -250,7 +242,6 @@ def render_regional_distribution(ctx: WordContext) -> None:
                  "100 % of its DIT transcriptions of the word (exact match + variants), so you "
                  "compare what a region produces instead of raw counts.",
         )
-    with col_top_n:
         st.html(_REGION_VARIANTS_CSS)
         # No min/max here: Streamlit would keep an out-of-range entry in the field and silently ignore it.
         top_n = st.number_input("Number of variants", value=12, step=1, key="region_dist_top_n",
@@ -328,36 +319,24 @@ def render_regional_distribution(ctx: WordContext) -> None:
     )
 
 
-def render_example_sentences(ctx: WordContext) -> None:
-    """Occurrences tab: a filterable table of every occurrence, or the sentences grouped by DIT variant."""
-    col_view, *free_slots = control_row()
-    view = col_view.radio("View", options=list(_OCCURRENCE_VIEWS), format_func=_OCCURRENCE_VIEWS.get,
-                          horizontal=True, key="occurrence_view", persist_state="session",
-                          help="All occurrences as one filterable table, or the sentences grouped by what "
-                               "Whisper (DIT) wrote for the word.")
-    if view == "table":
-        _render_occurrence_table(ctx, free_slots)
-    else:
-        _render_sentences_by_variant(ctx, free_slots)
-
-
-def _render_occurrence_table(ctx: WordContext, slots: list) -> None:
-    """Every occurrence of the word with its DIT and DAT transcription; selecting a row shows its details.
-
-    `slots` are the free places in the control row next to the view choice.
-    """
+def render_occurrences(ctx: WordContext) -> None:
+    """Occurrences tab: every occurrence of the word with its DIT and DAT transcription; selecting a row shows
+    its audio and word alignment below the table."""
+    controls = control_stack()
     table = build_occurrence_table(ctx.word_rows, ctx.word)
     # Per word, so filter values never refer to another word's transcriptions.
     key = f"occurrences_{ctx.word}"
 
-    col_search, col_show = slots
-    search = col_search.text_input(
+    search = controls.text_input(
         "Search", key=f"{key}_search", persist_state="session", placeholder="Word or sentence text…",
         help="Case-insensitive; matches the reference sentence, both transcripts and both transcribed words.",
     )
-    show = col_show.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
-                          key=f"{key}_show", persist_state="session")
-    col_dit, col_dat, col_region = control_row()
+    show = controls.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
+                          key=f"{key}_show", persist_state="session",
+                          help="All occurrences, only those where Whisper (DIT) wrote something other than the "
+                               "reference word, or only those where Whisper and the FHNW model (DAT) disagree.")
+    # Three short filters fit side by side in the half-width stack, which keeps the table higher up.
+    col_dit, col_dat, col_region = controls.columns(3)
     dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),
                                     key=f"{key}_dit", persist_state="session", placeholder="All",
                                     help="Most frequent first.")
@@ -391,108 +370,31 @@ def _render_occurrence_table(ctx: WordContext, slots: list) -> None:
     if not event.selection.rows:
         return
     row = filtered.iloc[event.selection.rows[0]]
-    st.markdown(f"#### Selected occurrence: {_sentence_header(row)}")
+    # Keyed, so the scroll below can find the heading.
+    st.container(key="selected_occurrence").markdown(f"#### Selected occurrence: {_sentence_header(row)}")
+    # The details open below the table, out of view; bring them up when a row is selected.
+    _scroll_to_selected_occurrence(row["path"])
     render_audio_gate()
     sentence_rows = ctx.sentence_rows[ctx.sentence_rows["path"] == row["path"]]
     _render_sentence_details(row, sentence_rows, ctx.word, ctx.dataset)
 
 
-def _render_sentences_by_variant(ctx: WordContext, slots: list) -> None:
-    """Sentences grouped by DIT hypothesis (TF-IDF desc).
-    Two-level pagination: outer pager selects which variants to show; inner shows sentences.
-    Matches and deletions sort to the bottom (TF-IDF = 0). The variant pager goes into the first of `slots`,
-    the free places in the control row next to the view choice.
+def _scroll_to_selected_occurrence(path: str) -> None:
+    """Scroll the page to the selected-occurrence heading.
+
+    Streamlit has no scroll command, so an invisible frame does it; it shares the app's origin and can reach
+    the page. Streamlit only reloads the frame when its content changes, and the content holds the path, so
+    the page scrolls once per newly selected row and not on every rerun (e.g. loading the audio).
     """
-    df_view, word_rows, word = ctx.sentence_rows, ctx.word_rows, ctx.word
-    selected_regions, include_preterite, dataset = ctx.regions, ctx.include_preterite, ctx.dataset
-    dit_rows = word_rows[word_rows["model"] == "dialect-ignorant"]
-
-    # Dedupe on (path, _variant) so sentences with multiple occurrences of the searched word appear under every variant.
-    unique_paths = (
-        dit_rows
-        .assign(
-            _variant=lambda d: d["hypothesis_word"].fillna("(deletion)"),
-            _region_idx=lambda d: d["dialect_region"].map(
-                lambda r: REGIONS.index(r) if r in REGIONS else len(REGIONS)
-            ),
-        )
-        .drop_duplicates(["path", "_variant"])
-        [["path", "hypothesis_word", "_variant", "_region_idx",
-          "dialect_region", "gender", "age",
-          "reference", "dat_hypothesis", "dit_hypothesis"]]
-    )
-
-    dit_table = _hypothesis_table(dit_rows, word, "dialect-ignorant", selected_regions, include_preterite, dataset)
-
-    available_variants = set(unique_paths["_variant"].unique())
-    variant_order = [
-        v for v in dit_table["hypothesis_word"].fillna("(deletion)").tolist()
-        if v in available_variants
-    ]
-
-    n_unique_sentences = unique_paths["path"].nunique()
-    st.markdown(f"**Sentences with word-level alignment**: {n_unique_sentences:,} sentences "
-                f"across {len(variant_order)} DIT variants")
-    # The list below can be long, so its help goes on top instead of underneath.
-    chart_help("The sentences grouped by what Whisper (DIT) wrote for the word, most region-typical variant first.",
-               "Open a sentence for its audio and word alignment. Use the page selectors when there are many.")
-
-    # One-time audio password prompt (the only gated feature); rendered once here, where clips appear.
-    render_audio_gate()
-
-    # Outer paginator for variants: 10 per page.
-    variant_page_size = 10
-    n_variant_pages = max(1, (len(variant_order) + variant_page_size - 1) // variant_page_size)
-    if n_variant_pages > 1:
-        variant_page = slots[0].selectbox(
-            "Variants",
-            options=list(range(1, n_variant_pages + 1)),
-            format_func=lambda p, n=n_variant_pages, total=len(variant_order): (
-                f"Page {p} of {n} (variants {(p - 1) * variant_page_size + 1}"
-                f"–{min(p * variant_page_size, total)})"
-            ),
-            key=f"variant_page_{word}",
-            help="Ten DIT variants per page, most region-typical first.",
-        )
-    else:
-        variant_page = 1
-    variant_start = (variant_page - 1) * variant_page_size
-    variants_on_page = variant_order[variant_start:variant_start + variant_page_size]
-
-    rows_by_path = dict(tuple(
-        df_view[df_view["path"].isin(set(unique_paths["path"]))]
-        .groupby("path", sort=False)
-    ))
-
-    page_size = 15
-    for i, variant in enumerate(variants_on_page):
-        variant_paths = (
-            unique_paths[unique_paths["_variant"] == variant]
-            .sort_values(["_region_idx", "path"])
-            .reset_index(drop=True)
-        )
-        n_variant = len(variant_paths)
-        variant_idx = variant_start + i
-
-        with st.expander(f"**DIT: `{variant}`** ({n_variant})", expanded=True):
-            n_pages = max(1, (n_variant + page_size - 1) // page_size)
-            if n_pages > 1:
-                col_page, *_ = control_row()
-                page = col_page.selectbox(
-                    "Sentences",
-                    options=list(range(1, n_pages + 1)),
-                    format_func=lambda p, n=n_pages, r=n_variant: (
-                        f"Page {p} of {n} (sentences {(p - 1) * page_size + 1}–{min(p * page_size, r)})"
-                    ),
-                    key=f"page_{word}_{variant_idx}",
-                )
-            else:
-                page = 1
-            start = (page - 1) * page_size
-            page_paths = variant_paths.iloc[start:start + page_size]
-
-            for _, row in page_paths.iterrows():
-                _render_example_sentence_expander(row, rows_by_path[row["path"]], word, dataset)
+    st.iframe(f"""<!-- {html.escape(path)} -->
+<script>
+const heading = parent.document.querySelector(".st-key-selected_occurrence");
+if (heading) {{
+  // Stay clear of the analysis tabs pinned to the top of the page.
+  heading.style.scrollMarginTop = "80px";
+  heading.scrollIntoView({{behavior: "smooth", block: "start"}});
+}}
+</script>""", height=1)
 
 
 def _dit_tfidf_lookup(ref_word: str, selected_regions: list[str], include_preterite: bool,
@@ -605,12 +507,6 @@ def _sentence_header(row: pd.Series) -> str:
     return f"**{row['dialect_region']}**" + (f" · {demographics}" if demographics else "") + f" · …{row['path'][-12:]}"
 
 
-def _render_example_sentence_expander(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
-    """One sentence as an expander holding its details."""
-    with st.expander(_sentence_header(row)):
-        _render_sentence_details(row, sentence_rows, word, dataset)
-
-
 def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: str, dataset: str) -> None:
     """Clip ID, audio player, reference + hypotheses, alignment HTML, and an optional technical alignment graph."""
     path = row["path"]
@@ -626,7 +522,8 @@ def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: 
     else:
         audio_key = f"audio_loaded_{path}"
         loaded = st.session_state.get(audio_key, False)
-        if not loaded and st.button("▶ Load audio", key=f"load_{path}"):
+        if not loaded and st.button("▶ Load audio", key=f"load_{path}",
+                                    help="Load the recording of this sentence. Clips load on request to keep the page fast."):
             st.session_state[audio_key] = True
             loaded = True
         if loaded:
@@ -655,7 +552,9 @@ def _render_sentence_details(row: pd.Series, sentence_rows: pd.DataFrame, word: 
         "'Show technical alignment' draws the matching as a graph.",
     )
 
-    if st.checkbox("Show technical alignment", key=f"graph_{path}"):
+    if st.checkbox("Show technical alignment", key=f"graph_{path}",
+                   help="Draw the bipartite matching behind the alignment: which reference word was matched "
+                        "to which transcript word, as used to compute the similarity scores."):
         png_dit = _reduced_graph_png(row["reference"], row["dit_hypothesis"])
 
         if png_dit is not None:

@@ -6,6 +6,9 @@ from _data import DATASET_CHOICES, DEFAULT_DATASET, REGION_COLORS, REGIONS
 _DATASET_KEY = "selected_dataset"
 _PRETERITE_KEY = "include_preterite"
 
+# Sidebar place above the filters for the word search, set by the entry script before the filters render.
+word_slot = st.sidebar
+
 
 def render_shared_filters() -> None:
     """Dataset and Preterite controls, rendered once by the entry script so every page sees the same values.
