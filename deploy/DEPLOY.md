@@ -50,6 +50,9 @@ sudo systemctl restart streamlit
 systemctl status streamlit          # expect: active (running)
 ```
 
+Normally you don't need to do this by hand: merges to `main` are deployed automatically within
+about a minute (see [Automatic deploys](#automatic-deploys)).
+
 Service control and inspection:
 ```bash
 systemctl status streamlit          # running?
@@ -66,6 +69,44 @@ printf 'password = "<new-password>"\n' | sudo -u dialectanalysis tee /opt/dialec
 sudo chmod 600 /opt/dialect-analysis/.streamlit/secrets.toml
 sudo systemctl restart streamlit
 ```
+
+## Automatic deploys
+
+A root cron job checks `origin/main` every minute. When there are new commits it:
+
+1. Fast-forwards the checkout as `dialectanalysis` (`git merge --ff-only`). If someone edited files directly on the server
+   and the history has diverged, it stops instead of creating a merge commit.
+2. Runs `uv pip install -r requirements.txt`, but only if `requirements.txt` changed.
+3. Copies `deploy/streamlit.service` to systemd and runs `daemon-reload`, but only if the unit changed.
+4. Restarts `streamlit` and checks that it is active again. If it isn't, it writes the last journal lines to the log.
+
+The untracked parts (audio, `.venv`, `.streamlit/secrets.toml`) aren't touched.
+
+| Piece | Repo source | Installed at |
+|---|---|---|
+| Deploy script | `deploy/dialect-deploy.sh` | `/usr/local/sbin/dialect-deploy` |
+| Cron entry | `deploy/dialect-deploy.cron` | `/etc/cron.d/dialect-deploy` |
+| Log | – | `/var/log/dialect-deploy.log` |
+
+The script runs as root, so cron runs the **installed, root-owned copy**, never the file in the repo. Otherwise anyone
+who can merge to `main` could run commands as root on the server. A change to `deploy/dialect-deploy.sh` only takes
+effect after you reinstall it (the log prints a note when that's needed).
+
+Install or reinstall:
+```bash
+sudo install -o root -g root -m 755 /opt/dialect-analysis/deploy/dialect-deploy.sh /usr/local/sbin/dialect-deploy
+sudo install -o root -g root -m 644 /opt/dialect-analysis/deploy/dialect-deploy.cron /etc/cron.d/dialect-deploy
+dgit remote -v    # must point to the repo whose main you want to deploy
+```
+
+Check that it works:
+```bash
+sudo /usr/local/sbin/dialect-deploy        # manual run; prints nothing if already up to date
+tail -f /var/log/dialect-deploy.log        # after a merge: "deploying abc1234 -> def5678" ... "ok, streamlit active"
+```
+
+Pause auto-deploy (e.g. while debugging on the server): `sudo chmod -x /usr/local/sbin/dialect-deploy`.
+Resume with `sudo chmod +x /usr/local/sbin/dialect-deploy`.
 
 ## First-time setup or rebuild
 
@@ -98,7 +139,8 @@ Only needed on a new server or after a wipe.
    ```
 7. Firewall: open 80 to the internal subnet with `sudo ufw allow 80/tcp` (firewalld:
    `sudo firewall-cmd --add-port=80/tcp --permanent && sudo firewall-cmd --reload`).
-8. Check: `curl -sI http://localhost` returns `HTTP/1.1 200`, then open `http://<server-hostname>` in
+8. Auto-deploy: install the script and cron entry as described in [Automatic deploys](#automatic-deploys).
+9. Check: `curl -sI http://localhost` returns `HTTP/1.1 200`, then open `http://<server-hostname>` in
    a browser and the app loads (audio playback prompts for the password; the rest is open).
 
 ## Troubleshooting
@@ -110,4 +152,5 @@ Only needed on a new server or after a wipe.
 | Browser stuck on "connecting" or reconnect loop | The process was killed (often out of memory) and restarted. Look for `oom` in `journalctl -u streamlit -e` and check `free -h`. |
 | "Audio file not found locally" on a clip | That corpus's audio isn't staged at the expected `datasets/...` path. |
 | `git pull` says "dubious ownership" | Git was run as the wrong user. Run it as the owner: `sudo -u dialectanalysis -H git -C /opt/dialect-analysis pull`. |
+| A merge isn't deployed | `tail /var/log/dialect-deploy.log`. If it shows `Not possible to fast-forward`, the server checkout has local changes: inspect them with `dgit status`. If the log is empty, check that `/etc/cron.d/dialect-deploy` exists and that `dgit remote -v` points to the right repo. |
 | Slow on the first open after a restart | Expected. The first visit warms an in-memory cache (data load and TF-IDF); later interactions are fast. |
