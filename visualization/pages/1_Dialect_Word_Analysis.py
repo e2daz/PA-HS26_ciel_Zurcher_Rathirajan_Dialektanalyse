@@ -206,7 +206,7 @@ selected_regions = render_region_filter()
 
 # The word search sits at the top of the sidebar, above the filters, so the analysis tabs can start at the
 # top of the page. It runs after the filters because its options depend on them.
-word_slot = _filters.word_slot
+word_slot = _filters.word_slot()
 search_side: SearchSide = word_slot.radio(
     "Search by",
     options=list(SEARCH_SIDES),
