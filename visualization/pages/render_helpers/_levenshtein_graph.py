@@ -118,7 +118,7 @@ def render(graphs: dict[str, dict], rank_labels: dict[str, str], dark: bool = Fa
       <select id="rank-by">{rank_options}</select>
     </label>
     <div class="stepper" role="group" aria-label="Number of variants">
-      <span>Number of variants<span class="help" title="How many of Whisper's variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier." aria-label="How many of Whisper's variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier.">?</span></span>
+      <span>Number of variants<span class="help" title="How many of the DIT variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier." aria-label="How many of the DIT variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier.">?</span></span>
       <button id="variant-count-decrease" type="button" aria-label="Decrease number of variants">−</button>
       <input id="variant-count" type="number" min="1" max="1" value="1" step="1">
       <button id="variant-count-increase" type="button" aria-label="Increase number of variants">+</button>

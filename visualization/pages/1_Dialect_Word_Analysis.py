@@ -41,9 +41,9 @@ ANALYSIS_VIEWS = {
     "Overview": (detail.render_overview,
                  "Which words Whisper (DIT) and the FHNW model (DAT) wrote for this word, and how often."),
     "Levenshtein": (detail.render_levenshtein_graph,
-                    "Whisper's variants of this word, arranged by how many letters they differ from it."),
+                    "The DIT variants of this word, arranged by how many letters they differ from it."),
     "Regions": (detail.render_regional_distribution,
-                "In which dialect regions Whisper writes which variant of this word."),
+                "In which dialect regions DIT writes which variant of this word."),
     "Occurrences": (detail.render_occurrences,
                     "Every occurrence of this word, with both transcripts, the audio and the word alignment."),
 }
@@ -126,7 +126,7 @@ def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preteri
         key="cloud_mode",
         persist_state="session",
         help="Which two transcripts form the pairs: the reference against Whisper (DIT), or the FHNW model "
-             "(DAT) against Whisper.",
+             "(DAT) against DIT.",
     )
     mode: CloudMode = "ref_dit" if mode_label.startswith("Reference") else "dat_dit"
 

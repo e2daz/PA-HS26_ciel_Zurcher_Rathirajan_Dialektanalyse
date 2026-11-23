@@ -90,8 +90,8 @@ _SHOW_OPTIONS = {
 # Also the table's column order; "dataset" is appended when both corpora are shown.
 _OCCURRENCE_COLUMN_CONFIG = {
     "dialect_region": st.column_config.TextColumn("region"),
-    "dit_word": st.column_config.TextColumn("DIT", help="What Whisper transcribed for this occurrence."),
-    "dat_word": st.column_config.TextColumn("DAT", help="What the FHNW model transcribed for this occurrence."),
+    "dit_word": st.column_config.TextColumn("DIT", help="What DIT transcribed for this occurrence."),
+    "dat_word": st.column_config.TextColumn("DAT", help="What DAT transcribed for this occurrence."),
     "dit_similarity": st.column_config.NumberColumn("DIT sim", format="%.2f",
                                                     help="Alignment similarity of the DIT word to the reference."),
     "dat_similarity": st.column_config.NumberColumn("DAT sim", format="%.2f",
@@ -165,9 +165,9 @@ def render_overview(ctx: WordContext) -> None:
                            help=f"How often the word occurs in the {len(ctx.regions)} selected region(s).")
     col_sentences.metric("Sentences", f"{ctx.word_rows['path'].nunique():,}")
     col_dit.metric("DIT variants", f"{variant_count(dit_rows):,}",
-                   help="Different words Whisper produced for it, excluding the word itself.")
+                   help="Different words DIT produced for it, excluding the word itself.")
     col_dat.metric("DAT variants", f"{variant_count(dat_rows):,}",
-                   help="Different words the FHNW model produced for it, excluding the word itself.")
+                   help="Different words DAT produced for it, excluding the word itself.")
 
     col_dit_table, col_dat_table = st.columns(2)
     with col_dit_table:
@@ -207,7 +207,7 @@ def render_levenshtein_graph(ctx: WordContext) -> None:
     }
     _levenshtein_graph.render(graphs, _GRAPH_RANK_LABELS, dark=st.context.theme.type == "dark")
     chart_help(
-        "Whisper's variants of the word by spelling distance. The word is in the middle, each ring is one more "
+        "The DIT variants of the word by spelling distance. The word is in the middle, each ring is one more "
         "letter change away (Levenshtein distance), and bigger nodes occur more often. Lines join variants that "
         "are spelled alike; solid lines are closer than dashed ones.",
         "Pick the ranking, the number of variants and the line distance in the controls on the left. Hover for numbers, click a node to "
@@ -311,7 +311,7 @@ def render_regional_distribution(ctx: WordContext) -> None:
     st.altair_chart((cells + labels).properties(height=min(486, 26 * len(row_order) + 40)),
                     width="stretch")
     chart_help(
-        "In which regions Whisper wrote the word correctly (first row) and in which it wrote one of the most "
+        "In which regions DIT wrote the word correctly (first row) and in which it wrote one of the most "
         "frequent variants (rows below). Darker = more often; the first row's colour is capped, so read its "
         "numbers from the labels.",
         "Regions have different amounts of data, so switch 'Values' to 'Share within region' to compare them. "
@@ -334,7 +334,7 @@ def render_occurrences(ctx: WordContext) -> None:
     show = controls.radio("Show", options=list(_SHOW_OPTIONS), format_func=_SHOW_OPTIONS.get, horizontal=True,
                           key=f"{key}_show", persist_state="session",
                           help="All occurrences, only those where Whisper (DIT) wrote something other than the "
-                               "reference word, or only those where Whisper and the FHNW model (DAT) disagree.")
+                               "reference word, or only those where DIT and DAT disagree.")
     # Three short filters fit side by side in the half-width stack, which keeps the table higher up.
     col_dit, col_dat, col_region = controls.columns(3)
     dit_words = col_dit.multiselect("DIT transcription", words_by_frequency(table, "dit_word"),

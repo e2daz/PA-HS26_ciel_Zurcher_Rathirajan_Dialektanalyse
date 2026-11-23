@@ -121,7 +121,7 @@ def render_headline_plots(summary: pd.DataFrame, regions_sorted: list[str]) -> N
     st.markdown("**Total cost delta**")
     st.altair_chart((delta_chart + zero).properties(height=220), width="stretch")
     chart_help("The difference between the two bars above (DIT minus DAT). The higher the bar, the more the "
-               "dialect throws off Whisper, i.e. the further the region's dialect is from Standard German.",
+               "dialect throws off DIT, i.e. the further the region's dialect is from Standard German.",
                "Regions are sorted from largest to smallest difference; hover a bar for the exact value.")
 
 
