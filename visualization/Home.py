@@ -39,7 +39,7 @@ page = st.navigation([
 
 if page.title != about.title:
     # The word search goes first in the sidebar; the analysis page fills this slot after the filters exist.
-    _filters.word_slot = st.sidebar.container()
+    _filters.reserve_word_slot()
     _filters.render_shared_filters()
 
 page.run()

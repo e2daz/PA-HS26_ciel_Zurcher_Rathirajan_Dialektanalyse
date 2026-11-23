@@ -6,8 +6,22 @@ from _data import DATASET_CHOICES, DEFAULT_DATASET, REGION_COLORS, REGIONS
 _DATASET_KEY = "selected_dataset"
 _PRETERITE_KEY = "include_preterite"
 
-# Sidebar place above the filters for the word search, set by the entry script before the filters render.
-word_slot = st.sidebar
+_WORD_SLOT_KEY = "_word_slot"
+
+
+def reserve_word_slot() -> None:
+    """Reserve the sidebar place above the filters for the word search; the entry script calls this before the
+    filters render.
+
+    Kept in the session state, not in a module variable: modules are shared by every user of the server, so a
+    second user loading the page at the same moment would otherwise swap the containers.
+    """
+    st.session_state[_WORD_SLOT_KEY] = st.sidebar.container()
+
+
+def word_slot():
+    """The sidebar place reserved by `reserve_word_slot`, or the sidebar itself if none was reserved."""
+    return st.session_state.get(_WORD_SLOT_KEY, st.sidebar)
 
 
 def render_shared_filters() -> None:

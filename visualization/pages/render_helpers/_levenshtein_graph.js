@@ -77,9 +77,12 @@ variantStepper.setRange(Math.min(minVariantCount, availableVariants), availableV
 let variantCount = variantStepper.set(loadVariantCount());
 let dragging = false;
 
-// Per reference word, so manual grouping survives the iframe being rebuilt (e.g. another variant count).
+// Per searched word and search side, so manual grouping survives the iframe being rebuilt (e.g. another
+// variant count) and a word searched as reference and as DIT word keeps two separate layouts.
 // Storing angles instead of coordinates keeps them valid when the ring spacing changes.
-const storageKey = "levenshteinRing:" + graphData.reference;
+const centerLabel = graphData.center_label || "Reference";
+const variantLabel = graphData.variant_label || "DIT variants";
+const storageKey = "levenshteinRing:" + (centerLabel === "Reference" ? "" : centerLabel + ":") + graphData.reference;
 const savedState = loadSavedState();
 let savedAngles = savedState.angles || {};
 const hiddenIds = new Set(savedState.hidden || []);
@@ -188,7 +191,7 @@ function hideTooltip() {
 }
 
 function nodeLines(node) {
-  if (node.kind === "reference") return ["Reference: " + node.label];
+  if (node.kind === "reference") return [centerLabel + ": " + node.label];
   const regions = Object.entries(node.region_counts || {})
     .map(([region, count]) => region + " (" + count + ")").join(", ");
   return [
@@ -312,13 +315,13 @@ function layout(nodes, edges, ringRadius) {
 function render() {
   root.selectAll("*").remove();
   if (graphData.nodes.length <= 1) {
-    message.text("No hypothesis variants are available for this reference word.");
+    message.text("No " + variantLabel + " are available for this word.");
     d3.selectAll("#ring-graph button, #ring-graph input, #ring-graph select").property("disabled", true);
     return;
   }
   // The how-to text is rendered by Streamlit under the graph, like the help of every other chart.
   message.text("");
-  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabels[rankBy] + ".");
+  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " " + variantLabel + " by " + rankLabels[rankBy] + ".");
   nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
   // Variants arrive ranked, so the first n hypothesis nodes are the top n.
   const nodes = graphData.nodes.slice(0, variantCount + 1).map(d => ({...d}));
