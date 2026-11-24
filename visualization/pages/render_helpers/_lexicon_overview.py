@@ -1,4 +1,5 @@
 """Word-cloud overview for the Dialect Word Analysis page."""
+import json
 from collections.abc import Callable
 
 import numpy as np
@@ -8,6 +9,7 @@ from streamlit_echarts import JsCode, st_echarts
 
 from _data import REGION_COLORS, CloudMode, pair_region_counts, tfidf_matrix_pairs
 from _help import chart_help
+from i18n import t
 
 _TABLE_COLUMNS = ["pair", "TF-IDF", "peak region", "count"]
 _TOP_N = 200
@@ -21,14 +23,8 @@ _MODE_PAIR_LABEL: dict[CloudMode, str] = {
 
 def render_caption(mode: CloudMode = "ref_dit") -> None:
     """Help text under the word cloud."""
-    pair = "reference word → what Whisper (DIT) wrote" if mode == "ref_dit" else \
-        "what the FHNW model (DAT) wrote → what Whisper (DIT) wrote"
-    chart_help(
-        f"Word pairs ({pair}) that are typical for one region. Bigger = more typical (TF-IDF), "
-        "colour = the region where the pair is most typical.",
-        "Hover a pair for its numbers and click it to analyse the word. Use 'Compare' to switch which "
-        "transcripts are paired.",
-    )
+    pair = t("cloud.pair_ref_dit") if mode == "ref_dit" else t("cloud.pair_dat_dit")
+    chart_help(t("cloud.shows", pair=pair), t("cloud.use"))
 
 
 def compute_top_table(selected_regions: list[str], include_preterite: bool,
@@ -90,10 +86,11 @@ def render_word_cloud(table: pd.DataFrame, on_click: Callable[[], None]) -> None
     option = {
         "tooltip": {
             "show": True,
+            # json.dumps quotes the translated labels safely for the JavaScript.
             "formatter": JsCode(
                 "function(p){return p.name + '<br/>TF-IDF: ' + p.value.toFixed(5) + "
-                "'<br/>peak: ' + (p.data.peak || '—') + "
-                "'<br/>count: ' + p.data.count;}"
+                f"'<br/>' + {json.dumps(t('cloud.tooltip_peak'))} + ': ' + (p.data.peak || '–') + "
+                f"'<br/>' + {json.dumps(t('cloud.tooltip_count'))} + ': ' + p.data.count;}}"
             ),
         },
         "series": [{
@@ -129,30 +126,16 @@ def render_word_cloud(table: pd.DataFrame, on_click: Callable[[], None]) -> None
 def render_top_candidates_expander(table: pd.DataFrame, mode: CloudMode = "ref_dit") -> None:
     """Collapsible table listing the top regionally distinctive substitution pairs."""
     pair_label = _MODE_PAIR_LABEL[mode]
-    pair_help = (
-        "(ref, DIT-hyp) pair: Standard German reference word -> DIT (Whisper) hypothesis."
-        if mode == "ref_dit"
-        else "(DAT-hyp, DIT-hyp) pair: DAT (FHNW) hypothesis word -> DIT (Whisper) hypothesis."
-    )
+    pair_help = t("cloud.col_pair_help_ref_dit") if mode == "ref_dit" else t("cloud.col_pair_help_dat_dit")
     column_config = {
-        "pair": st.column_config.TextColumn(help=pair_help),
-        "TF-IDF": st.column_config.NumberColumn(
-            help=f"For each pair, the highest TF-IDF across the selected regions is shown. "
-                 f"Documents = all 7 dialect regions; terms = {pair_label} pairs. "
-                 "Higher = pair is more distinct to its specific region.",
-            format="%.5f",
-        ),
-        "peak region": st.column_config.TextColumn(
-            help="The selected region where this pair's TF-IDF is highest.",
-        ),
-        "count": st.column_config.TextColumn(
-            help="Count in highest TF-IDF region / total count across the selected regions.",
-        ),
+        "pair": st.column_config.TextColumn(t("cloud.col_pair"), help=pair_help),
+        "TF-IDF": st.column_config.NumberColumn(help=t("cloud.col_tfidf_help", pair=pair_label), format="%.5f"),
+        "peak region": st.column_config.TextColumn(t("cloud.col_peak"), help=t("cloud.col_peak_help")),
+        "count": st.column_config.TextColumn(t("cloud.col_count"), help=t("cloud.col_count_help")),
     }
-    with st.expander("Top Dialect Specific Candidates"):
+    with st.expander(t("cloud.candidates")):
         st.dataframe(table, width="stretch", hide_index=True, column_config=column_config)
-        chart_help("The pairs from the word cloud as a list, most region-typical first.",
-                   "Click a column header to sort; hover it to see what the column means.")
+        chart_help(t("cloud.candidates_shows"), t("common.table_use"))
 
 
 def _decode_pair(p: str) -> str:

@@ -1,13 +1,28 @@
 """Sidebar filters shared across the app."""
 import streamlit as st
 
-from _data import DATASET_CHOICES, DEFAULT_DATASET, REGION_COLORS, REGIONS
+from _data import ALL_DATASETS, DATASET_CHOICES, DEFAULT_DATASET, REGION_COLORS, REGIONS
+from i18n import localized, t
 
 _DATASET_KEY = "selected_dataset"
 _PRETERITE_KEY = "include_preterite"
 
-# Sidebar place above the filters for the word search, set by the entry script before the filters render.
-word_slot = st.sidebar
+_WORD_SLOT_KEY = "_word_slot"
+
+
+def reserve_word_slot() -> None:
+    """Reserve the sidebar place above the filters for the word search; the entry script calls this before the
+    filters render.
+
+    Kept in the session state, not in a module variable: modules are shared by every user of the server, so a
+    second user loading the page at the same moment would otherwise swap the containers.
+    """
+    st.session_state[_WORD_SLOT_KEY] = st.sidebar.container()
+
+
+def word_slot():
+    """The sidebar place reserved by `reserve_word_slot`, or the sidebar itself if none was reserved."""
+    return st.session_state.get(_WORD_SLOT_KEY, st.sidebar)
 
 
 def render_shared_filters() -> None:
@@ -16,22 +31,26 @@ def render_shared_filters() -> None:
     `persist_state` keeps the values while a page that hides the filters (About) is open.
     """
     st.sidebar.selectbox(
-        "Dataset",
+        t("filters.dataset"),
         DATASET_CHOICES,
         index=DATASET_CHOICES.index(DEFAULT_DATASET),
-        key=_DATASET_KEY,
+        format_func=dataset_label,
+        key=localized(_DATASET_KEY),
         persist_state="session",
-        help="Switch between STT4SG-350, SDS-200, or All (both corpora combined).",
+        help=t("filters.dataset_help"),
     )
     st.sidebar.toggle(
-        "Include Preterite sentences",
+        t("filters.preterite"),
         value=False,
         key=_PRETERITE_KEY,
         persist_state="session",
-        help="As Swiss German does not have the Preterite tense and replaces it with the Perfect, including such "
-             "cases can introduce noise in the transcripts. Exclude them to focus on dialect specifics; include "
-             "for more data.",
+        help=t("filters.preterite_help"),
     )
+
+
+def dataset_label(dataset: str) -> str:
+    """The corpus name, or "All" in the current language for both corpora combined."""
+    return t("filters.all_datasets") if dataset == ALL_DATASETS else dataset
 
 
 def shared_filters() -> tuple[str, bool]:
@@ -42,13 +61,13 @@ def shared_filters() -> tuple[str, bool]:
 def render_region_filter() -> list[str]:
     """Region multiselect for the lexicon; returns the selected regions, or all of them when empty."""
     region_filter = st.sidebar.multiselect(
-        "Filter regions",
+        t("filters.regions"),
         REGIONS,
         default=[],
         key="region_filter",
         persist_state="session",
-        help="Leave empty to include all 7 regions. Pick specific regions to narrow the view.",
-        placeholder="All regions",
+        help=t("filters.regions_help"),
+        placeholder=t("filters.all_regions"),
     )
     chip_css = "\n".join(
         f'.stMultiSelect [data-baseweb="tag"][aria-label*="{region}"],'

@@ -17,33 +17,28 @@ from _data import (  # noqa: E402
 )
 from _filters import shared_filters  # noqa: E402
 from _layout import sidebar_counts  # noqa: E402
+from i18n import number, t  # noqa: E402
 
 # --- Page 2 ---
-st.title("Regional Distance from Standard German")
+st.title(t("regional.title"))
 
 dataset, include_preterite = shared_filters()
 uses_balanced = dataset == STT4SG.name # only STT4SG has balanced subset
 regional.render_intro(uses_balanced)
 if dataset == ALL_DATASETS:
-    st.warning(
-        "**All** combines both corpora: the STT4SG-350 part uses its balanced subset, the "
-        "SDS-200 part uses all sentences. Per-region sentence counts therefore vary, so read "
-        "per-region means as descriptive, not statistically balanced."
-    )
+    st.warning(t("regional.all_warning"))
 elif not uses_balanced:
-    st.warning(
-        f"**{dataset}** has no curated balanced subset. Per-region sentence counts vary "
-        "considerably, so read per-region means as descriptive, not statistically balanced."
-    )
+    st.warning(t("regional.unbalanced_warning", dataset=dataset))
 
-with st.spinner("Computing per-sentence alignment costs..."):
+with st.spinner(t("regional.loading")):
     summary = regional.regional_summary(include_preterite, dataset)
     per_sentence = filter_preterite(per_sentence_cost(dataset), include_preterite)
 
 alignments_in_view = load_region_alignments_and_metadata(tuple(REGIONS), dataset, include_dat_dit=False)
 alignments_in_view = alignments_in_view[alignments_in_view["path"].isin(set(per_sentence["path"]))]
 
-sidebar_counts(alignments=len(alignments_in_view), sentences=per_sentence["path"].nunique())
+sidebar_counts(t("counts.alignments", n=number(len(alignments_in_view))),
+               t("counts.sentences", n=number(per_sentence["path"].nunique())))
 
 regions_sorted = summary["dialect_region"].tolist()
 

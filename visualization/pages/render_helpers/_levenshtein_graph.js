@@ -77,9 +77,17 @@ variantStepper.setRange(Math.min(minVariantCount, availableVariants), availableV
 let variantCount = variantStepper.set(loadVariantCount());
 let dragging = false;
 
-// Per reference word, so manual grouping survives the iframe being rebuilt (e.g. another variant count).
+// Per searched word and search side, so manual grouping survives the iframe being rebuilt (e.g. another
+// variant count) and a word searched as reference and as DIT word keeps two separate layouts.
 // Storing angles instead of coordinates keeps them valid when the ring spacing changes.
-const storageKey = "levenshteinRing:" + graphData.reference;
+const centerLabel = graphData.center_label || "Reference";
+const variantLabel = graphData.variant_label || "DIT variants";
+
+// Fills the {name} placeholders of a translated text from `texts` (set by the Python side).
+function fmt(template, params) {
+  return template.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match));
+}
+const storageKey = "levenshteinRing:" + (centerLabel === "Reference" ? "" : centerLabel + ":") + graphData.reference;
 const savedState = loadSavedState();
 let savedAngles = savedState.angles || {};
 const hiddenIds = new Set(savedState.hidden || []);
@@ -188,16 +196,16 @@ function hideTooltip() {
 }
 
 function nodeLines(node) {
-  if (node.kind === "reference") return ["Reference: " + node.label];
+  if (node.kind === "reference") return [centerLabel + ": " + node.label];
   const regions = Object.entries(node.region_counts || {})
     .map(([region, count]) => region + " (" + count + ")").join(", ");
   return [
     node.label,
-    "Reference distance: " + node.distance,
-    "Alignments: " + node.count,
-    "Mean similarity: " + node.mean_similarity,
+    fmt(texts.node_distance, {distance: node.distance}),
+    fmt(texts.node_alignments, {count: node.count}),
+    fmt(texts.node_similarity, {similarity: node.mean_similarity}),
     "TF-IDF: " + node.tfidf,
-    "Regions: " + (regions || "–"),
+    fmt(texts.node_regions, {regions: regions || "–"}),
   ];
 }
 
@@ -312,13 +320,14 @@ function layout(nodes, edges, ringRadius) {
 function render() {
   root.selectAll("*").remove();
   if (graphData.nodes.length <= 1) {
-    message.text("No hypothesis variants are available for this reference word.");
+    message.text(fmt(texts.no_variants, {variants: variantLabel}));
     d3.selectAll("#ring-graph button, #ring-graph input, #ring-graph select").property("disabled", true);
     return;
   }
   // The how-to text is rendered by Streamlit under the graph, like the help of every other chart.
   message.text("");
-  variantSummary.text("Top " + variantCount + " of " + graphData.candidate_count + " DIT variants by " + rankLabels[rankBy] + ".");
+  variantSummary.text(fmt(texts.summary, {shown: variantCount, total: graphData.candidate_count,
+                                          variants: variantLabel, ranking: rankLabels[rankBy]}));
   nodeScale = Math.max(0.5, Math.min(1, Math.sqrt(20 / Math.max(1, variantCount))));
   // Variants arrive ranked, so the first n hypothesis nodes are the top n.
   const nodes = graphData.nodes.slice(0, variantCount + 1).map(d => ({...d}));
@@ -350,7 +359,7 @@ function render() {
     .call(positionEdges)
     .attr("stroke", colors.edge)
     .attr("stroke-dasharray", d => edgeDash(d.distance))
-    .on("mouseenter", (event, d) => showTooltip(event, ["Pairwise Levenshtein distance: " + d.distance]))
+    .on("mouseenter", (event, d) => showTooltip(event, [fmt(texts.edge_tooltip, {distance: d.distance})]))
     .on("mouseleave", hideTooltip);
   // Dragging redraws only the moved node's edges, which matters at thousands of edges.
   const incidentEdges = new Map(nodes.map(node => [node.id, []]));
@@ -368,9 +377,9 @@ function render() {
     const hiddenNodes = nodes.filter(d => hiddenIds.has(d.id));
     hiddenMenu.property("hidden", hiddenNodes.length === 0);
     if (hiddenNodes.length === 0) hiddenMenu.property("open", false);
-    d3.select("#hidden-summary").text("Hidden (" + hiddenNodes.length + ")");
+    d3.select("#hidden-summary").text(fmt(texts.hidden, {count: hiddenNodes.length}));
     d3.select("#hidden-list").selectAll("button").data(hiddenNodes, d => d.id).join("button")
-      .attr("type", "button").attr("title", "Show this variant again").text(d => d.label)
+      .attr("type", "button").attr("title", texts.show_again).text(d => d.label)
       .on("click", (event, d) => {
         hiddenIds.delete(d.id);
         saveState();
@@ -460,7 +469,7 @@ function render() {
       .attr("text-anchor", "middle").attr("dy", 4).attr("font-size", 12).attr("font-weight", 600)
       .attr("fill", colors.muted)
       .attr("stroke", colors.label_halo).attr("stroke-width", 3).attr("paint-order", "stroke")
-      .text(distance === maxDistance ? "distance " + distance : distance);
+      .text(distance === maxDistance ? fmt(texts.ring_distance, {distance}) : distance);
   }
 
   svg.on("click", () => {
@@ -511,7 +520,7 @@ function exportPng() {
   const image = new Image();
   image.onerror = () => {
     URL.revokeObjectURL(svgUrl);
-    message.text("The PNG could not be created in this browser.");
+    message.text(texts.png_failed);
   };
   image.onload = () => {
     const pixelRatio = 3;

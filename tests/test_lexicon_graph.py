@@ -36,6 +36,21 @@ class TestLevenshteinRingGraph(unittest.TestCase):
         self.assertEqual(len(graph["edges"]), 3)
         self.assertEqual(graph["max_edge_distance"], 5)
 
+    def test_variant_column_puts_reference_words_around_a_dit_word(self):
+        rows = pd.DataFrame({
+            "reference_word": ["nun", "nun", "jetzt", None],
+            "hypothesis_word": ["jetzt"] * 4,
+            "similarity": [0.4, 0.5, 1.0, 0.0],
+        })
+
+        graph = build_levenshtein_ring_graph(rows, "jetzt", variant_column="reference_word",
+                                             center_label="DIT", variant_label="reference words")
+
+        self.assertEqual([node["label"] for node in graph["nodes"]], ["jetzt", "nun"])
+        self.assertEqual(graph["nodes"][1]["count"], 2)
+        self.assertEqual(graph["center_label"], "DIT")
+        self.assertEqual(graph["variant_label"], "reference words")
+
     def test_uses_count_as_tie_breaker_and_limits_candidates(self):
         rows = pd.DataFrame({
             "hypothesis_word": ["aaa", "bbb", "bbb", "ccc"],

@@ -13,17 +13,20 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pages.render_helpers import _lexicon_detail as detail, _lexicon_overview as overview
-from _data import CloudMode, lexicon_search_index, word_sentence_alignments  # noqa: E402
+from _data import (  # noqa: E402
+    CloudMode, SearchSide, lexicon_search_index, word_alignments, word_sentence_alignments,
+)
 import _filters  # noqa: E402
 from _filters import render_region_filter, shared_filters  # noqa: E402
 from _layout import control_row, sidebar_counts, tab_header  # noqa: E402
+from i18n import all_translations, localized, number, t  # noqa: E402
 
 # Reference words offered as one-click examples, grouped by the kind of variation they show
 # (DIAL-25). Checked against the DIT alignments of both corpora.
 EXAMPLE_WORDS = {
     # Lexical: the dialect uses a different word with the same meaning, which Whisper transcribes
     # literally (krankenhaus -> spital, sprechen -> reden, deshalb -> darum, zuvor -> vorher).
-    "Lexical": [
+    "lexical": [
         "fahrrad", "krankenhaus", "arbeiten", "hause", "sprechen",
         "junge", "deshalb", "nun", "selbst", "zuvor",
     ],
@@ -31,28 +34,70 @@ EXAMPLE_WORDS = {
     # sound-alike word rather than a dialect spelling. Strongly regional: lösung -> lesung
     # (Wallis 58 %, elsewhere <= 4 %), abend -> oben (Basel 28 %), haben -> habt (Wallis, Bern).
     # Broader: denn -> dann, wann -> wenn, darin -> drin.
-    "Phonetic": [
+    "phonetic": [
         "lösung", "abend", "haben", "denn", "wann", "darin",
     ],
 }
 
-# One entry per tab: a render function taking a WordContext and one sentence on what the tab shows.
+# One entry per tab: its translation key and render function. The tab's title and its description per search
+# side are `tabs.<key>` and `tabs.<key>_<side>` in the locale files.
 ANALYSIS_VIEWS = {
-    "Overview": (detail.render_overview,
-                 "Which words Whisper (DIT) and the FHNW model (DAT) wrote for this word, and how often."),
-    "Levenshtein": (detail.render_levenshtein_graph,
-                    "The DIT variants of this word, arranged by how many letters they differ from it."),
-    "Regions": (detail.render_regional_distribution,
-                "In which dialect regions DIT writes which variant of this word."),
-    "Occurrences": (detail.render_occurrences,
-                    "Every occurrence of this word, with both transcripts, the audio and the word alignment."),
+    "overview": detail.render_overview,
+    "levenshtein": detail.render_levenshtein_graph,
+    "regions": detail.render_regional_distribution,
+    "occurrences": detail.render_occurrences,
 }
+TAB_KEY = "analysis_tab"
 
 WORD_KEY = "selected_word"
+SEARCH_SIDE_KEY = "search_by"
+# How the search side is written in the URL; the same in every language, so shared links keep working.
+SEARCH_SIDES: dict[SearchSide, str] = {"reference": "Reference", "dit": "DIT"}
+
+
+def _side_label(side: SearchSide) -> str:
+    return t(f"search.side_{side}")
+
+
+# The (search side, word) last written to the URL, to tell a URL changed by Back/Forward from one the page wrote.
+_URL_STATE_KEY = "_search_in_url"
+
+
+def _search_from_url() -> tuple[SearchSide, str]:
+    """The search side ("DIT" or "Reference", any case; reference if missing or unknown) and word in the URL."""
+    value = st.query_params.get(SEARCH_SIDE_KEY, "").casefold()
+    side = next((side for side, label in SEARCH_SIDES.items() if value in (side, label.casefold())), "reference")
+    return side, st.query_params.get(WORD_KEY, "")
+
+
+def _write_search_to_url(side: SearchSide, word: str) -> None:
+    """Put the search side and word into the URL in one update, so the browser gets one history entry."""
+    params = {k: v for k, v in st.query_params.to_dict().items() if k not in (SEARCH_SIDE_KEY, WORD_KEY)}
+    if side != "reference":  # the default side stays out of the URL
+        params[SEARCH_SIDE_KEY] = SEARCH_SIDES[side]
+    if word:
+        params[WORD_KEY] = word
+    st.query_params.from_dict(params)
 
 
 def _clear_word() -> None:
     st.session_state[WORD_KEY] = ""
+
+
+def _open_word(word: object, side: SearchSide, dataset: str, regions: tuple[str, ...],
+               include_preterite: bool) -> None:
+    """Open `word` as a `side` word from a click in an analysis table, if the current filters have it (DIAL-35).
+
+    Runs as a widget callback, so the search side and the search box can still be set before they render.
+    """
+    if not isinstance(word, str) or word.startswith("("):  # a deletion/insertion row has no word to open
+        st.session_state["open_note"] = t("notes.no_word_to_open")
+        return
+    if word not in lexicon_search_index(dataset, regions, include_preterite, side)[0].index:
+        st.session_state["open_note"] = t("notes.no_data_as_side", word=word, side=_side_label(side))
+        return
+    st.session_state[SEARCH_SIDE_KEY] = side
+    st.session_state[WORD_KEY] = word
 
 
 def _select_example_word() -> None:
@@ -63,9 +108,11 @@ def _select_example_word() -> None:
     st.session_state["example_word_pill"] = None
 
 
-def _open_clicked_pair(known_words: pd.Index) -> None:
-    """Open the word on the left of the clicked 'word → DIT word' pair, if it is a reference word."""
-    word = st.session_state[overview.WORD_CLOUD_KEY]["chart_event"]["name"].split(" → ", 1)[0]
+def _open_clicked_pair(known_words: pd.Index, side: SearchSide) -> None:
+    """Open a word of the clicked 'word → DIT word' pair: the left one if it is a reference word, or in DIT
+    search the DIT word on the right."""
+    left, right = st.session_state[overview.WORD_CLOUD_KEY]["chart_event"]["name"].split(" → ", 1)
+    word = right if side == "dit" else left
     if word in known_words:
         st.session_state[WORD_KEY] = word
     else:
@@ -74,18 +121,17 @@ def _open_clicked_pair(known_words: pd.Index) -> None:
 
 def render_example_words(ref_counts: pd.Series) -> None:
     """Example-type choice and the example chips it offers, plus the user's own additions."""
-    st.subheader("Example words")
+    st.subheader(t("examples.title"))
     # Let the user pick which kind of variation the example words should illustrate (DIAL-25).
     col_type, *_ = control_row()
     example_type = col_type.radio(
-        "Example type",
+        t("examples.type"),
         options=list(EXAMPLE_WORDS),
+        format_func=lambda kind: t(f"examples.type_{kind}"),
         horizontal=True,
-        key="example_word_type",
+        key=localized("example_word_type"),
         persist_state="session",
-        help="Lexical = a different word with the same meaning (krankenhaus -> spital). "
-             "Phonetic = the dialect pronunciation is transcribed as a similar-sounding word "
-             "(lösung -> lesung in Wallis, abend -> oben in Basel).",
+        help=t("examples.type_help"),
     )
 
     # Only offer words the current dataset/region/preterite filter can show; the search box rejects others.
@@ -96,100 +142,140 @@ def render_example_words(ref_counts: pd.Series) -> None:
     col_examples, col_add = st.columns([5, 1], vertical_alignment="bottom")
     with col_examples:
         st.pills(
-            "Pick an example word",
+            t("examples.pick"),
             options=example_words,
             key="example_word_pill",
             on_change=_select_example_word,
             wrap=True,
-            help="Predefined reference words for the selected example type. Add your own with the button on the right.",
+            help=t("examples.pick_help"),
         )
     with col_add:
-        with st.popover("+ Add word", help="Add your own reference words to the example list."):
+        with st.popover(t("examples.add"), help=t("examples.add_help")):
             st.multiselect(
-                "Your example words",
+                t("examples.yours"),
                 options=ref_counts.index.tolist(),
                 key="custom_example_words",
                 persist_state="session",
-                placeholder="Add a reference word...",
-                help="Kept for this browser session only.",
+                placeholder=t("examples.yours_placeholder"),
+                help=t("examples.yours_help"),
             )
 
 
-def render_word_cloud(ref_counts: pd.Series, regions: list[str], include_preterite: bool, dataset: str) -> None:
+def render_word_cloud(word_counts: pd.Series, regions: list[str], include_preterite: bool, dataset: str,
+                      side: SearchSide) -> None:
     """Word cloud of regionally distinctive pairs, as a way to discover interesting words."""
-    st.subheader("Regionally typical word pairs")
+    st.subheader(t("cloud.title"))
     col_mode, *_ = control_row()
-    mode_label = col_mode.radio(
-        "Compare",
-        options=["Reference → DIT", "DAT → DIT"],
+    mode: CloudMode = col_mode.radio(
+        t("cloud.compare"),
+        options=["ref_dit", "dat_dit"],
+        format_func=lambda option: t(f"cloud.compare_{option}"),
         horizontal=True,
-        key="cloud_mode",
+        key=localized("cloud_mode"),
         persist_state="session",
-        help="Which two transcripts form the pairs: the reference against Whisper (DIT), or the FHNW model "
-             "(DAT) against DIT.",
+        help=t("cloud.compare_help"),
     )
-    mode: CloudMode = "ref_dit" if mode_label.startswith("Reference") else "dat_dit"
 
     table = overview.compute_top_table(regions, include_preterite, mode, dataset)
 
     if table.empty:
-        st.warning("No regionally distinctive pairs in the selected regions.")
+        st.warning(t("cloud.empty"))
         return
 
-    overview.render_word_cloud(table, on_click=lambda: _open_clicked_pair(ref_counts.index))
+    overview.render_word_cloud(table, on_click=lambda: _open_clicked_pair(word_counts.index, side))
     overview.render_caption(mode)
     overview.render_top_candidates_expander(table, mode)
 
 
-def render_analysis(word: str, regions: list[str], include_preterite: bool, dataset: str) -> None:
-    """Analysis tabs for one reference word; only the open tab does any work."""
-    with st.spinner("Loading word data..."):
-        sentence_rows = word_sentence_alignments(word, tuple(regions), dataset, include_preterite)
-    word_rows = sentence_rows[(sentence_rows["reference_word"] == word) & (sentence_rows["model"] != "dat-dit")]
-    ctx = detail.WordContext(word, word_rows, sentence_rows, regions, include_preterite, dataset)
+def render_analysis(word: str, side: SearchSide, regions: list[str], include_preterite: bool, dataset: str) -> None:
+    """Analysis tabs for one reference or DIT word; only the open tab does any work."""
+    open_note = st.session_state.pop("open_note", None)
+    if open_note:
+        st.toast(open_note)
+    with st.spinner(t("search.loading_word")):
+        sentence_rows = word_sentence_alignments(word, tuple(regions), dataset, include_preterite, side)
+    word_rows = word_alignments(sentence_rows, word, side)
+    ctx = detail.WordContext(
+        word, word_rows, sentence_rows, regions, include_preterite, dataset, side,
+        open_word=lambda w, s: _open_word(w, s, dataset, tuple(regions), include_preterite),
+    )
 
-    tabs = st.tabs(list(ANALYSIS_VIEWS), key="analysis_tab", on_change="rerun", bind="query-params")
-    for tab, (render_view, description) in zip(tabs, ANALYSIS_VIEWS.values()):
+    title = t("search.dit_title", word=word) if side == "dit" else word
+    labels = {key: t(f"tabs.{key}") for key in ANALYSIS_VIEWS}
+    _keep_open_tab(labels)
+    tabs = st.tabs(list(labels.values()), key=TAB_KEY, on_change="rerun", bind="query-params")
+    for tab, (key, render_view) in zip(tabs, ANALYSIS_VIEWS.items()):
         if tab.open:
             with tab:
-                tab_header(word, description)
+                tab_header(title, t(f"tabs.{key}_{side}"))
                 render_view(ctx)
+
+
+def _keep_open_tab(labels: dict[str, str]) -> None:
+    """Keep the open tab when the language changes. The tab titles are also the tab widget's value (and the
+    `analysis_tab` URL parameter), so a title stored in the other language is mapped to the same tab here."""
+    current = st.session_state.get(TAB_KEY) or st.query_params.get(TAB_KEY)
+    for key, label in labels.items():
+        if current != label and current in all_translations(f"tabs.{key}"):
+            st.session_state[TAB_KEY] = label
+            return
 
 
 # --- Page 1 ---
 dataset, include_preterite = shared_filters()
 selected_regions = render_region_filter()
 
-with st.spinner("Loading alignment data..."):
-    # Cached per (dataset, regions, preterite): ref-word frequencies + sidebar counts.
-    ref_counts, n_alignments, n_sentences = lexicon_search_index(
-        dataset, tuple(selected_regions), include_preterite
-    )
-
-# A filter change can remove the selected word from the search index; go back and say why.
-previous_word = st.session_state.get(WORD_KEY)
-if previous_word and previous_word not in ref_counts.index:
-    st.session_state[WORD_KEY] = ""
-    st.session_state["filtered_out_word"] = previous_word
-
-# On a fresh page load, a word from the URL isn't in the session state until the search box renders.
-requested_word = st.session_state.get(WORD_KEY, st.query_params.get(WORD_KEY, ""))
-analysis_open = requested_word in ref_counts.index
-
 # The word search sits at the top of the sidebar, above the filters, so the analysis tabs can start at the
 # top of the page. It runs after the filters because its options depend on them.
-word_slot = _filters.word_slot
-selected_word = word_slot.selectbox(
-    "Reference word",
-    options=[""] + ref_counts.index.tolist(),
-    key=WORD_KEY,
-    bind="query-params",
-    placeholder="Type a word…",
-    help="Type a Standard German word to see its dialect-specific variants.",
+word_slot = _filters.word_slot()
+# The search side and word are synced with the URL by hand rather than with bind="query-params": opening a word
+# from an Overview table changes both at once, and two bound widgets would leave two browser history entries,
+# so Back would need two clicks. A URL that changed from outside (page load, Back/Forward) wins; otherwise the
+# widgets do and the URL follows below the search box.
+url_state = _search_from_url()
+if st.session_state.get(_URL_STATE_KEY) != url_state:
+    st.session_state[SEARCH_SIDE_KEY], st.session_state[WORD_KEY] = url_state
+search_side: SearchSide = word_slot.radio(
+    t("search.by"),
+    options=list(SEARCH_SIDES),
+    format_func=_side_label,
+    horizontal=True,
+    key=localized(SEARCH_SIDE_KEY),
+    help=t("search.by_help"),
 )
+
+with st.spinner(t("search.loading_index")):
+    # Cached per (dataset, regions, preterite, side): word frequencies + sidebar counts.
+    word_counts, n_alignments, n_sentences = lexicon_search_index(
+        dataset, tuple(selected_regions), include_preterite, search_side
+    )
+
+# A filter change, or switching the search side, can remove the selected word from the search index; go back
+# and say why.
+previous_word = st.session_state.get(WORD_KEY)
+side_changed = st.session_state.get("_prev_search_side", search_side) != search_side
+st.session_state["_prev_search_side"] = search_side
+if previous_word and previous_word not in word_counts.index:
+    st.session_state[WORD_KEY] = ""
+    st.session_state["filtered_out_word"] = (
+        t("notes.not_a_side_word", word=previous_word, side=_side_label(search_side)) if side_changed
+        else t("notes.filtered_out", word=previous_word)
+    )
+
+analysis_open = st.session_state.get(WORD_KEY, "") in word_counts.index
+
+selected_word = word_slot.selectbox(
+    t(f"search.box_{search_side}"),
+    options=[""] + word_counts.index.tolist(),
+    key=WORD_KEY,
+    placeholder=t("search.placeholder"),
+    help=t(f"search.box_{search_side}_help"),
+)
+if (search_side, selected_word) != url_state:
+    _write_search_to_url(search_side, selected_word)
+st.session_state[_URL_STATE_KEY] = (search_side, selected_word)
 if analysis_open:
-    word_slot.button("← Back to word selection", on_click=_clear_word, width="stretch",
-                      help="Close this word's analysis and return to the example words and the word cloud.")
+    word_slot.button(t("search.back"), on_click=_clear_word, width="stretch", help=t("search.back_help"))
 word_slot.divider()
 
 if st.session_state.get("_prev_selected_word") != selected_word:
@@ -198,19 +284,26 @@ if st.session_state.get("_prev_selected_word") != selected_word:
     st.session_state["_prev_selected_word"] = selected_word
 
 if analysis_open:
-    render_analysis(selected_word, selected_regions, include_preterite, dataset)
+    render_analysis(selected_word, search_side, selected_regions, include_preterite, dataset)
 else:
-    st.title("Dialect Word Analysis")
-    st.caption("Pick a word in the sidebar, click an example word or click a pair in the word cloud to analyse it.")
-    render_example_words(ref_counts)
+    st.title(t("nav.word_analysis"))
+    if search_side == "dit":
+        st.caption(t("search.start_dit"))
+    else:
+        st.caption(t("search.start_reference"))
+        # The example words are reference words, so they are only offered in reference search.
+        render_example_words(word_counts)
 
-    sidebar_counts(reference_words=len(ref_counts), alignments=n_alignments, sentences=n_sentences)
+    n_words = number(len(word_counts))
+    sidebar_counts(t("counts.dit_words", n=n_words) if search_side == "dit" else t("counts.reference_words", n=n_words),
+                   t("counts.alignments", n=number(n_alignments)), t("counts.sentences", n=number(n_sentences)))
 
     filtered_out = st.session_state.pop("filtered_out_word", None)
     if filtered_out:
-        st.info(f"**{filtered_out}** has no data with the current filters.")
+        st.info(filtered_out)
     cloud_note = st.session_state.pop("cloud_note", None)
     if cloud_note:
-        st.info(f"**{cloud_note}** is a DAT transcription, not a reference word, so it has no analysis.")
+        st.info(t("notes.cloud_no_dit", word=cloud_note) if search_side == "dit"
+                else t("notes.cloud_dat_word", word=cloud_note))
 
-    render_word_cloud(ref_counts, selected_regions, include_preterite, dataset)
+    render_word_cloud(word_counts, selected_regions, include_preterite, dataset, search_side)
