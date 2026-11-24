@@ -28,6 +28,7 @@ def tab_header(word: str, description: str) -> None:
     st.caption(description)
 
 
-def sidebar_counts(**counts: int) -> None:
-    """Data size for the current filters as one muted line in the sidebar, e.g. sidebar_counts(alignments=1200)."""
-    st.sidebar.caption(" · ".join(f"{value:,} {name.replace('_', ' ')}" for name, value in counts.items()))
+def sidebar_counts(*counts: str) -> None:
+    """Data size for the current filters as one muted line in the sidebar, e.g.
+    sidebar_counts(t("counts.alignments", n=number(1200)))."""
+    st.sidebar.caption(" · ".join(counts))

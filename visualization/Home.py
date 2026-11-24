@@ -6,8 +6,9 @@ Run: streamlit run visualization/Home.py
 import streamlit as st
 
 import _filters
+from i18n import render_language_selector, t
 
-st.set_page_config(page_title="Swiss German Dialect Analysis", layout="wide")
+st.set_page_config(page_title=t("app.page_title"), layout="wide")
 
 # Streamlit reserves an empty header row above the page and 10rem below it. Instead, the header becomes
 # see-through (only its buttons take clicks), so the analysis tabs sit in that row and stay there while
@@ -29,13 +30,16 @@ st.markdown(f"""<style>
 }}
 </style>""", unsafe_allow_html=True)
 
-about = st.Page("pages/3_About.py", title="About")
+about = st.Page("pages/3_About.py", title=t("nav.about"))
 # The pages are listed above the filters in the sidebar, so the top of the page is free for the analysis tabs.
 page = st.navigation([
-    st.Page("pages/1_Dialect_Word_Analysis.py", title="Dialect Word Analysis", default=True),
-    st.Page("pages/2_Regional_Distance.py", title="Regional Distance"),
+    st.Page("pages/1_Dialect_Word_Analysis.py", title=t("nav.word_analysis"), default=True),
+    st.Page("pages/2_Regional_Distance.py", title=t("nav.regional_distance")),
     about,
 ], position="sidebar")
+
+# On every page, About included, so the language can be switched anywhere.
+render_language_selector()
 
 if page.title != about.title:
     # The word search goes first in the sidebar; the analysis page fills this slot after the filters exist.

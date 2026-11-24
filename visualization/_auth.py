@@ -4,6 +4,8 @@ import hmac
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
 
+from i18n import t
+
 
 def audio_unlocked() -> bool:
     """True if this session entered the audio password. Pure read — safe to call repeatedly."""
@@ -14,22 +16,19 @@ def render_audio_gate() -> None:
     """Render the one-time audio password prompt where audio playback appears. Call once per render."""
     if st.session_state.get("audio_authed"):
         return
-    st.caption("Audio is password-protected because the corpora are licensed; automated downloading or crawling "
-               "is not permitted.")
+    st.caption(t("audio.gate_note"))
     try:
         expected = st.secrets["password"]
     except (KeyError, StreamlitSecretNotFoundError):
         expected = None
     if not isinstance(expected, str) or not expected:
-        st.warning("Audio is locked: no password is configured (set `password` in `.streamlit/secrets.toml`).")
+        st.warning(t("audio.no_password"))
         return
     with st.form("audio_gate", clear_on_submit=True):
-        password = st.text_input("Enter the password to enable audio playback", type="password",
-                                 help="The recordings may only be played by project members. Unlocking lasts "
-                                      "for this browser session.")
-        submitted = st.form_submit_button("Unlock audio")
+        password = st.text_input(t("audio.password"), type="password", help=t("audio.password_help"))
+        submitted = st.form_submit_button(t("audio.unlock"))
     if submitted and hmac.compare_digest(password, expected):
         st.session_state["audio_authed"] = True
         st.rerun()
     elif submitted:
-        st.error("Wrong password")
+        st.error(t("audio.wrong_password"))

@@ -6,6 +6,8 @@ from pathlib import Path
 
 import streamlit as st
 
+from i18n import t
+
 # Vendored (pinned) so the graph renders without network access.
 _D3_PATH = Path(__file__).resolve().parent / "vendor" / "d3-7.9.0.min.js"
 _SCRIPT_PATH = Path(__file__).with_suffix(".js")
@@ -92,6 +94,21 @@ def _to_js(value) -> str:
     return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c")
 
 
+# Texts the graph script writes itself; `{name}` placeholders are filled in there.
+_SCRIPT_TEXTS = ("no_variants", "summary", "edge_tooltip", "hidden", "show_again", "png_failed", "ring_distance",
+                 "node_distance", "node_alignments", "node_similarity", "node_regions")
+
+
+def _attr(key: str) -> str:
+    """A translated text, escaped for an HTML attribute or element."""
+    return html.escape(t(key), quote=True)
+
+
+def _help_icon(key: str) -> str:
+    """Streamlit-like (?) icon that shows the translated text on hover."""
+    return f'<span class="help" title="{_attr(key)}" aria-label="{_attr(key)}">?</span>'
+
+
 def render(graphs: dict[str, dict], rank_labels: dict[str, str], dark: bool = False) -> None:
     """Render a concentric-ring graph in an isolated component.
 
@@ -114,44 +131,45 @@ def render(graphs: dict[str, dict], rank_labels: dict[str, str], dark: bool = Fa
      --control-bg: {colors['tooltip_bg']}; --control-border: {colors['tooltip_border']}; --control-text: {colors['text']};">
   <div class="controls">
     <label>
-      <span>Select variants by<span class="help" title="Which DIT variants make it into the graph: highest TF-IDF (most typical for the selected regions), most alignment occurrences, or highest mean alignment similarity to the reference." aria-label="Which DIT variants make it into the graph: highest TF-IDF (most typical for the selected regions), most alignment occurrences, or highest mean alignment similarity to the reference.">?</span></span>
+      <span>{_attr("graph.rank_by")}{_help_icon("graph.rank_by_help")}</span>
       <select id="rank-by">{rank_options}</select>
     </label>
-    <div class="stepper" role="group" aria-label="Number of variants">
-      <span>Number of variants<span class="help" title="How many of the DIT variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier." aria-label="How many of the DIT variants of the word are drawn, taken from the top of the ranking chosen above. More variants show rarer spellings but make the graph busier.">?</span></span>
-      <button id="variant-count-decrease" type="button" aria-label="Decrease number of variants">−</button>
+    <div class="stepper" role="group" aria-label="{_attr("graph.variant_count")}">
+      <span>{_attr("graph.variant_count")}{_help_icon("graph.variant_count_help")}</span>
+      <button id="variant-count-decrease" type="button" aria-label="{_attr("graph.decrease")}">−</button>
       <input id="variant-count" type="number" min="1" max="1" value="1" step="1">
-      <button id="variant-count-increase" type="button" aria-label="Increase number of variants">+</button>
+      <button id="variant-count-increase" type="button" aria-label="{_attr("graph.increase")}">+</button>
     </div>
-    <div class="stepper" role="group" aria-label="Show edges up to distance">
-      <span>Show edges up to distance<span class="help" title="Lines join two variants whose spellings differ by at most this many letter changes (Levenshtein distance). Lower it to keep only the closest pairs; longer lines are faded, not removed." aria-label="Lines join two variants whose spellings differ by at most this many letter changes (Levenshtein distance). Lower it to keep only the closest pairs; longer lines are faded, not removed.">?</span></span>
-      <button id="edge-distance-decrease" type="button" aria-label="Decrease edge distance">−</button>
+    <div class="stepper" role="group" aria-label="{_attr("graph.edge_distance")}">
+      <span>{_attr("graph.edge_distance")}{_help_icon("graph.edge_distance_help")}</span>
+      <button id="edge-distance-decrease" type="button" aria-label="{_attr("graph.decrease")}">−</button>
       <input id="edge-distance" type="number" min="1" max="1" value="1" step="1">
-      <button id="edge-distance-increase" type="button" aria-label="Increase edge distance">+</button>
+      <button id="edge-distance-increase" type="button" aria-label="{_attr("graph.increase")}">+</button>
     </div>
     <div class="button-row">
-      <button id="hide-selected" type="button" disabled title="Click a node first, then hide it to declutter the graph. Hidden variants can be shown again from the Hidden menu.">Hide selected</button>
+      <button id="hide-selected" type="button" disabled title="{_attr("graph.hide_help")}">{_attr("graph.hide")}</button>
       <details id="hidden-menu" hidden>
         <summary id="hidden-summary"></summary>
         <div class="hidden-panel">
-          <button id="show-all-hidden" type="button">Show all</button>
+          <button id="show-all-hidden" type="button">{_attr("graph.show_all")}</button>
           <div id="hidden-list"></div>
         </div>
       </details>
     </div>
     <div class="button-row">
-      <button id="reset-layout" type="button" title="Put dragged nodes back where the layout placed them and reset the zoom.">Reset layout</button>
-      <button id="export-png" type="button" title="Save the graph as it is shown now (zoom, moved and hidden nodes) as a PNG image.">Export PNG</button>
+      <button id="reset-layout" type="button" title="{_attr("graph.reset_help")}">{_attr("graph.reset")}</button>
+      <button id="export-png" type="button" title="{_attr("graph.export_help")}">{_attr("graph.export")}</button>
     </div>
     <div id="variant-summary" style="color:{colors['muted']};"></div>
     <div id="graph-message" style="color:{colors['muted']};"></div>
   </div>
-  <svg id="graph-svg" viewBox="0 0 900 620" role="img" aria-label="Levenshtein ring graph"></svg>
+  <svg id="graph-svg" viewBox="0 0 900 620" role="img" aria-label="{_attr("graph.aria")}"></svg>
 </div>
 <script>{_d3_source()}</script>
 <script>
 const graphsByRank = {_to_js(graphs)};
 const rankLabels = {_to_js(rank_labels)};
+const texts = {_to_js({key: t(f"graph.{key}") for key in _SCRIPT_TEXTS})};
 const colors = {_to_js(colors)};
 </script>
 <script>{_graph_script()}</script>
